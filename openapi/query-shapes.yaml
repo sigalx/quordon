@@ -1,0 +1,1567 @@
+---
+openapi: 3.1.0
+info:
+  title: Quordon Query Shape Discovery API
+  version: 1.2.1
+  description: >-
+    Executable contract module for discovering aggregate and keyset SELECT query shapes assigned
+    to the authenticated principal. It is referenced by openapi.yaml and is
+    validated bidirectionally against the runtime handler.
+
+x-quordon-status: stable
+x-quordon-runtime-contract: true
+x-quordon-capability-contract:
+  operation: list_query_shapes
+  owner: core
+  requires-effective-operation: aggregate-or-select_keyset
+  adapter-call: forbidden
+
+security:
+  - basicAuth: []
+
+servers:
+  - url: /
+    description: Current route on the Quordon process; no version prefix.
+
+tags:
+  - name: Discovery
+    description: Principal-scoped discovery of policy-authorized query templates.
+
+paths:
+  /query-shapes:
+    x-quordon-method-contract:
+      allowed: [GET]
+      unsupported:
+        status: 405
+        code: METHOD_NOT_ALLOWED
+        before-authentication-and-audit: true
+        headers: {Allow: GET, Cache-Control: no-store}
+    get:
+      operationId: listQueryShapes
+      summary: List allowed query shapes
+      description: >-
+        Returns the complete, validated public aggregate and keyset SELECT construction templates authorized
+        through exactly one assigned profile. The response is produced only
+        from a disclosure-safe immutable snapshot derived from the policy,
+        cached adapter capability set, and identifier semantics verified during
+        datasource initialization;
+        the operation never opens a database connection, resolves a schema or
+        object, probes identifier semantics, or invokes a DBMS adapter. A shape
+        is returned only when the authenticated principal is assigned the
+        profile, the profile explicitly enables list_query_shapes and at least
+        one query-shape operation, and every configured shape operation is
+        present in the adapter's effective cached capabilities. Before that
+        derived snapshot is published, every shape is
+        checked against the same object, field, feature, and identifier-semantics
+        policy used by aggregate or keyset authorization. A shape that is unreachable or
+        denied makes the profile configuration incompatible; it is never
+        silently filtered or exposed. The response is a construction contract, not executable
+        SQL: clients copy the declared query members, replace value_types with
+        strictly typed values, and choose a grouped limit within the published
+        maximum. Actual result column types remain source-dependent and are
+        returned by the matching query operation in its result columns. Shape
+        discovery does not prove that the current table or view, fields,
+        compatible source types, or optional index admission constraint remain valid. Aggregate
+        execution revalidates all of them and may return 422 UNSUPPORTED_QUERY
+        after concurrent DDL or schema drift. Missing Accept, */*, and
+        application/json select legacy v1. The vendor v2 media type explicitly
+        opts in to time_bucket. Vendor v3 additionally opts in to keyset SELECT
+        shapes. A profile is never returned partially: time_bucket requires v2
+        or v3 and select_keyset requires v3, otherwise the endpoint returns 406.
+      x-quordon-status: stable
+      x-quordon-capability: list_query_shapes
+      x-quordon-strict-query-parameters: true
+      x-quordon-no-datasource-call: true
+      x-quordon-processing-order:
+        - validate-method-path-and-basic-auth
+        - parse-the-closed-accept-header-without-profile-or-snapshot-disclosure
+        - parse-a-closed-query-parameter-set
+        - require-exactly-one-valid-utf8-nonempty-profile
+        - resolve-principal-assignment-and-configured-list-query-shapes-and-shape-operations-from-static-policy
+        - on-policy-denial-write-bounded-denial-audit-without-shape-metadata
+        - verify-every-configured-shape-operation-against-cached-adapter-capabilities-without-calling-the-adapter
+        - on-unsupported-capability-write-bounded-completion-without-shape-metadata
+        - require-a-current-atomically-published-disclosure-safe-snapshot-generation
+        - on-missing-or-stale-disclosure-snapshot-write-unavailable-completion-without-shape-metadata
+        - mint-list-query-shapes-operation-bound-token
+        - write-mandatory-allow-decision-audit
+        - when-the-selected-complete-representation-is-unavailable-write-the-mandatory-406-completion-audit-and-return-no-partial-list
+        - acquire-bounded-core-response-capacity
+        - verify-token-bound-precomputed-response-size-and-payload-invariants
+        - clone-the-complete-prevalidated-payload-using-only-the-token
+        - write-mandatory-completion-audit
+        - send-http-response-only-after-successful-completion-audit
+      x-quordon-disclosure-boundary:
+        returned:
+          - public-shape-name
+          - operator-authored-public-description
+          - operation-mode-when-applicable-source-projection-filter-shape-ordering-and-limit
+          - placeholder-types-and-arity
+          - policy-profile-and-policy-version
+        forbidden:
+          - sql-or-sql-fragments
+          - bind-values
+          - credentials-or-dsn
+          - required-index
+          - maximum-rows-examined-per-scan
+          - execution-plan-or-cost
+          - policy-rules-for-unassigned-profiles
+          - raw-policy-document
+        snapshot-publication-requires:
+          - supported-datasource-product-and-version
+          - verified-homogeneous-identifier-semantics
+          - every-shape-source-authorized-by-profile-resource-policy
+          - every-source-field-authorized-by-profile-field-policy
+          - every-aggregate-feature-authorized-by-profile-query-policy
+          - every-keyset-feature-authorized-by-profile-query-policy
+          - no-overlapping-or-unreachable-client-visible-shape
+          - cached-time-bucket-utc-adapter-feature-before-publishing-a-time-bucket-profile
+        source-field-authorization:
+          source-field-set:
+            - dimension-projection-fields
+            - field-aggregate-measure-fields
+            - filter-predicate-fields
+            - dimension-order-fields
+            - time-bucket-projection-fields
+            - keyset-projection-fields
+            - keyset-order-fields
+          count-all-contributes-source-field: false
+          measure-order-alias-is-source-field: false
+          time-bucket-order-alias-is-source-field: false
+          measure-order-alias-requirement: >-
+            Resolve under datasource identifier semantics to exactly one
+            projected measure alias. Do not authorize the alias through the
+            source-field policy.
+          dimension-order-requirement: >-
+            Resolve to a projected dimension source field and authorize that
+            source field through the field policy.
+          repeated-source-field-across-roles: allowed
+          policy-and-audit-resource-set: canonicalized-sorted-unique-schema-object-pairs
+          policy-and-audit-field-set: canonicalized-sorted-unique-source-fields
+          identifier-collision-checks:
+            - duplicate-projected-dimensions
+            - duplicate-output-names-across-dimensions-and-measures
+            - duplicate-measure-aliases
+            - duplicate-normalized-filter-terms
+            - duplicate-normalized-order-terms
+          same-source-field-in-multiple-predicates-or-measures: allowed
+          source-field-equal-to-its-only-measure-alias: allowed
+          unresolved-or-ambiguous-order-target-result: reject-profile-configuration-before-readiness
+        incompatible-shape-result: reject-profile-configuration-before-readiness
+        unauthorized-profile-result:
+          status: 403
+          code: DENIED_OPERATION
+          shape-metadata-disclosed: false
+          datasource-call: false
+        physical-schema-freshness:
+          cached-table-column-or-index-metadata: none
+          discovery-guarantees-current-executability: false
+          aggregate-execution-revalidates:
+            - configured-object-with-columns
+            - referenced-fields-and-compatible-types
+            - optional-index-plan-admission
+            - current-plan-admission-controls
+          keyset-execution-revalidates:
+            - configured-object-with-columns
+            - referenced-fields-and-compatible-types
+            - nonnull-order-by-key-columns
+            - cursor-arity-types-and-source-ranges
+            - current-plan-admission-controls
+          schema-drift-result:
+            status: 422
+            code: UNSUPPORTED_QUERY
+      x-quordon-authorization-token:
+        type: AuthorizedQueryShapeList
+        opaque-and-immutable: true
+        minted-only-by-policy-package: true
+        binds:
+          - principal
+          - credential-identifier
+          - profile
+          - policy-version-and-redacted-policy-hash
+          - datasource
+          - adapter
+          - identifier-semantics-value-and-cache-generation
+          - effective-max-result-bytes
+          - exact-immutable-public-shape-set-handle
+          - requested-media-type-and-selected-complete-representation-or-unavailable-outcome
+          - public-shape-set-hash
+          - sorted-unique-authorized-resources-and-fields
+        response-builder-input: authorized-token-only
+        forbidden-response-builder-inputs:
+          - raw-profile-name
+          - raw-policy-snapshot
+          - general-shape-map
+        mutable-aliases: forbidden
+        public-shape-set-hash:
+          algorithm: sha-256
+          output: lowercase-hex
+          domain-separation-prefix:
+            v1-and-v2: "quordon/query-shapes/v1 followed by one NUL byte"
+            v3: "quordon/query-shapes/v3 followed by one NUL byte"
+          payload: >-
+            RFC 8785 JSON Canonicalization Scheme bytes of the exact public
+            shapes array in its published order.
+          string-encoding: utf-8
+          includes:
+            - public-shape-name
+            - public-description-when-present
+            - operation
+            - complete-public-query-template
+          excludes:
+            - response-envelope
+            - policy-version-and-profile
+            - credentials-dsn-and-bind-values
+            - required-index
+            - maximum-rows-examined-per-scan
+            - all-other-execution-only-policy-members
+          deterministic-fixture-required: true
+      x-quordon-snapshot-lifecycle:
+        phases:
+          - decode-and-strictly-validate-static-policy
+          - validate-public-shape-structure-feature-policy-and-complete-response-size-before-any-datasource-probe
+          - initialize-datasource-and-verify-product-version-and-identifier-semantics
+          - validate-all-public-shapes-against-resource-field-and-feature-policy
+          - calculate-identity-specific-audit-size-bounds
+          - atomically-publish-disclosure-safe-snapshot-generation
+        token-mint-requires-current-generation: true
+        missing-or-stale-generation:
+          advertise-list-query-shapes: false
+          token-minted: false
+          direct-request-status: 503
+          direct-request-code: SERVICE_UNAVAILABLE
+          datasource-call-on-request: false
+        required-for-readiness-datasource:
+          missing-generation-makes-global-readiness-fail: true
+        optional-datasource:
+          missing-generation-does-not-make-global-readiness-fail: true
+          list-query-shapes-capability-omitted: true
+          direct-request-remains-unavailable-until-restart: true
+        permanent-shape-policy-incompatibility:
+          classification: configuration-error
+          process-startup: reject
+        unsupported-optional-adapter-feature:
+          snapshot-publication: skipped
+          readiness-failure: false
+          direct-request: 501-CAPABILITY_NOT_IMPLEMENTED-without-datasource-call
+        transient-datasource-initialization-failure:
+          classification: dependency-unavailable
+          required-datasource-readiness: fail
+          optional-datasource-readiness: unaffected
+        mvp-refresh-model: restart-only
+        policy-reload: unsupported
+        topology-or-identifier-semantics-change-requires-restart: true
+        observed-semantics-mismatch:
+          observation-source: readiness-or-another-authorized-datasource-operation
+          atomically-invalidate-generation: true
+          new-tokens: forbidden
+          restoration-without-process-restart: forbidden
+        mixing-policy-semantics-or-shape-generations: forbidden
+      x-quordon-response-budget:
+        effective-limit: profile-and-hard-max_result_bytes
+        partial-response: forbidden
+        truncation: forbidden
+        fixed-envelope-or-complete-shapes-do-not-fit: reject-policy-at-startup
+        encoded-size-includes:
+          - json-syntax
+          - escaped-public-descriptions
+          - all-shape-members
+        startup-size-validation: exact-or-conservative-before-snapshot-publication
+        size-checked-before-json-materialization: true
+      x-quordon-audit:
+        mandatory: true
+        fail-closed: true
+        denial-detached-from-request-cancellation: true
+        completion-detached-from-request-cancellation: true
+        common-records:
+          - request-id
+          - principal
+          - credential-identifier
+          - operation
+          - policy-version
+          - redacted-policy-hash
+          - decision-outcome-or-reason-code-as-applicable
+        redacted-policy-hash:
+          field-name: policy_hash
+          source: canonical-redacted-policy-snapshot-bound-to-the-authorization-decision
+          required-on-every-decision-and-completion: true
+          raw-policy-or-secret-derived-verifier: forbidden
+        decision-records:
+          event: operation_decision
+          duration-ms: forbidden
+          query-id: forbidden
+        completion-records:
+          event: operation_completion
+          duration-ms: required-including-zero
+          query-id: forbidden
+        pre-token-denial:
+          event: operation_decision
+          decision: deny
+          reason-code: DENIED_OPERATION
+          records-requested-profile-raw: false
+          requested-profile-hash:
+            field-name: requested_profile_hash
+            algorithm: sha-256
+            output: lowercase-hex
+            domain-separation-prefix: "quordon/requested-profile/v1 followed by one NUL byte"
+            payload: exact-valid-utf8-query-parameter-bytes
+          requested-profile-byte-length:
+            field-name: requested_profile_bytes
+            representation: bounded-unsigned-integer
+          records-authorized-profile: false
+          records-resources-fields-shape-count-or-hash: false
+          write-failure-result:
+            status: 503
+            code: SERVICE_UNAVAILABLE
+        unsupported-cached-aggregate-capability:
+          event: operation_completion
+          outcome: not_implemented
+          error-kind: omitted
+          records: [profile, datasource, adapter]
+          records-resources-fields-shape-count-or-hash: false
+          write-failure-result:
+            status: 503
+            code: SERVICE_UNAVAILABLE
+        post-token-records:
+          - profile
+          - datasource
+          - adapter
+          - returned-shape-count
+          - sorted-unique-authorized-resources
+          - sorted-unique-authorized-fields
+          - public-shape-set-hash
+          - response-bytes
+        post-token-allow:
+          event: operation_decision
+          decision: allow
+          records-authorized-resources-fields-and-shape-set-hash: true
+        successful-completion:
+          event: operation_completion
+          outcome: success
+          records-shape-count-response-bytes-and-duration: true
+        missing-or-stale-disclosure-snapshot:
+          event: operation_completion
+          outcome: error
+          error-kind: unavailable
+          records: [profile, datasource, adapter]
+          records-resources-fields-shape-count-or-hash: false
+          write-failure-result:
+            status: 503
+            code: SERVICE_UNAVAILABLE
+        does-not-record:
+          - serialized-shapes
+          - public-descriptions
+          - execution-only-policy-members
+        capacity-failure-after-allow-decision:
+          event: operation_completion
+          completion-required: true
+          outcome: error
+          error-kind: capacity
+        internal-failure-before-token:
+          event: operation_completion
+          outcome: error
+          error-kind: internal
+          duration-ms: required-including-zero
+          records-authorized-profile-datasource-adapter-only-when-already-resolved: true
+          records-resources-fields-shape-count-or-hash: false
+          resulting-response:
+            status: 500
+            code: INTERNAL_ERROR
+        internal-failure-after-token:
+          event: operation_completion
+          outcome: error
+          error-kind: internal
+          duration-ms: required-including-zero
+          records-authorized-profile-datasource-adapter-resources-fields-and-shape-set-hash-from-token: true
+          records-response-bytes-only-when-already-calculated: true
+          resulting-response:
+            status: 500
+            code: INTERNAL_ERROR
+        completion-write-failure:
+          successful-http-response: forbidden
+          status: 503
+          code: SERVICE_UNAVAILABLE
+        maximum-event-size-bytes: 16777216
+        maximum-event-size-validated-before-snapshot-publication: true
+        maximum-event-size-preflight-covers:
+          - denial-for-every-configured-basic-credential-even-without-a-publishing-profile
+          - unsupported-capability-completion-without-a-snapshot
+          - unavailable-or-internal-completion-without-a-snapshot
+          - allow-and-completion-with-the-full-authorized-scope-after-token-minting
+        preflight-materializes-complete-json: false
+      x-quordon-required-response-headers:
+        X-Request-ID: server-generated-nonempty-value
+        Cache-Control: no-store
+        Vary: Accept
+        handler-contract-test-required: true
+      x-quordon-error-contract:
+        "400": [INVALID_REQUEST]
+        "401": [AUTHENTICATION_REQUIRED, INVALID_CREDENTIALS]
+        "403": [DENIED_OPERATION]
+        "406": [REPRESENTATION_NOT_ACCEPTABLE]
+        "500": [INTERNAL_ERROR]
+        "501": [CAPABILITY_NOT_IMPLEMENTED]
+        "503": [CAPACITY_EXCEEDED, SERVICE_UNAVAILABLE]
+      x-quordon-profile-denial-equivalence:
+        cases:
+          - profile-does-not-exist
+          - profile-is-not-assigned-to-principal
+          - profile-does-not-configure-list-query-shapes
+          - profile-does-not-configure-aggregate-or-select-keyset
+        status: 403
+        code: DENIED_OPERATION
+        message: The operation is not allowed by policy
+        policy-version-presence: identical-for-all-cases
+        response-metadata: [request_id, policy_version]
+        datasource-adapter-shapes: forbidden
+        internal-reason-visible-only-in-bounded-audit: true
+      tags: [Discovery]
+      parameters:
+        - $ref: "#/components/parameters/Profile"
+        - $ref: "#/components/parameters/QueryShapesAccept"
+      responses:
+        "200":
+          description: Complete public aggregate shape list for the selected profile.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequiredRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            Vary:
+              $ref: "#/components/headers/VaryAccept"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryShapeListResult"
+              example:
+                policy_profile: analytics
+                policy_version: "3"
+                datasource: primary-mysql
+                adapter: mysql8
+                shapes:
+                  - name: orders_by_status
+                    description: Count orders for one status and group them by status.
+                    operation: aggregate
+                    query:
+                      mode: grouped
+                      source:
+                        schema: application
+                        name: orders
+                      projection:
+                        - kind: dimension
+                          field: status
+                        - kind: measure
+                          function: count_all
+                          alias: orders_count
+                      filter:
+                        kind: predicate
+                        field: status
+                        operator: eq
+                        value_types: [string]
+                      order_by:
+                        - kind: measure
+                          alias: orders_count
+                          direction: desc
+                      maximum_limit: 100
+            application/vnd.quordon.query-shapes.v2+json:
+              schema:
+                $ref: "#/components/schemas/QueryShapeListResultV2"
+              example:
+                policy_profile: analytics
+                policy_version: "3"
+                datasource: primary-mysql
+                adapter: mysql8
+                shapes:
+                  - name: orders_by_created_day
+                    operation: aggregate
+                    query:
+                      mode: grouped
+                      source: {schema: application, name: orders}
+                      projection:
+                        - {kind: time_bucket, field: created_at, unit: day, timezone: UTC, alias: created_day}
+                        - {kind: measure, function: count_all, alias: orders_count}
+                      order_by:
+                        - {kind: time_bucket, alias: created_day, direction: asc}
+                      maximum_limit: 100
+            application/vnd.quordon.query-shapes.v3+json:
+              schema:
+                $ref: "#/components/schemas/QueryShapeListResultV3"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/DeniedOperation"
+        "406":
+          $ref: "#/components/responses/RepresentationNotAcceptable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/CapabilityNotImplemented"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+      description: HTTP Basic Auth on every application request.
+
+  parameters:
+    Profile:
+      name: profile
+      in: query
+      required: true
+      description: >-
+        Assigned server-side policy profile. It must occur exactly once;
+        repeated or additional query parameters and invalid UTF-8 are rejected
+        with 400 INVALID_REQUEST by the documented strict query-string semantic.
+      schema:
+        type: string
+        minLength: 1
+
+    QueryShapesAccept:
+      name: Accept
+      in: header
+      required: false
+      description: >-
+        Closed representation negotiation. Missing, */*, and application/json
+        select the legacy v1 representation, which cannot contain time_bucket.
+        The vendor media types explicitly opt in to v2 or v3. Lists, parameters, and
+        any other media type are rejected with 400 INVALID_REQUEST.
+      schema:
+        type: string
+        enum:
+          - "*/*"
+          - application/json
+          - application/vnd.quordon.query-shapes.v2+json
+          - application/vnd.quordon.query-shapes.v3+json
+
+  headers:
+    RequiredRequestId:
+      description: Server-generated nonempty request correlation identifier.
+      required: true
+      schema:
+        type: string
+        minLength: 1
+
+    NoStore:
+      description: Query shape discovery responses must not be stored.
+      required: true
+      schema:
+        type: string
+        const: no-store
+
+    VaryAccept:
+      description: Representation selection depends on the Accept request header.
+      required: true
+      schema:
+        type: string
+        const: Accept
+
+  responses:
+    InvalidRequest:
+      description: The query parameter set or profile encoding is invalid.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequiredRequestId"
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/InvalidRequestError"
+    Unauthorized:
+      description: HTTP Basic credentials are absent or invalid.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequiredRequestId"
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        WWW-Authenticate:
+          required: true
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: "#/components/schemas/AuthenticationRequiredError"
+              - $ref: "#/components/schemas/InvalidCredentialsError"
+    DeniedOperation:
+      description: The profile is not assigned or does not allow shape discovery.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequiredRequestId"
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DeniedOperationError"
+    InternalError:
+      description: An internal invariant failed before a public response was sent.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequiredRequestId"
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/InternalErrorEnvelope"
+    CapabilityNotImplemented:
+      description: The selected profile's adapter does not effectively support aggregate.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequiredRequestId"
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CapabilityNotImplementedError"
+    ServiceUnavailable:
+      description: Core response capacity or a mandatory service dependency is unavailable.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequiredRequestId"
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: "#/components/schemas/CapacityExceededError"
+              - $ref: "#/components/schemas/ServiceUnavailableError"
+
+    RepresentationNotAcceptable:
+      description: >-
+        The authorized profile contains a time-bucket shape and therefore has
+        no complete legacy v1 representation. No partial shape list is sent.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequiredRequestId"
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        Vary:
+          $ref: "#/components/headers/VaryAccept"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/RepresentationNotAcceptableError"
+
+  schemas:
+    Identifier:
+      description: Portable SQL identifier; it is always quoted by the DBMS adapter.
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+
+    ResourceRef:
+      description: Logical schema and table or trusted view used by the aggregate shape.
+      type: object
+      additionalProperties: false
+      required: [schema, name]
+      properties:
+        schema:
+          $ref: "#/components/schemas/Identifier"
+        name:
+          $ref: "#/components/schemas/Identifier"
+
+    ErrorEnvelopeBase:
+      description: Sanitized error envelope used by this endpoint.
+      type: object
+      required: [code, message, request_id]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+          minLength: 1
+        request_id:
+          type: string
+          minLength: 1
+        policy_version:
+          type: string
+          minLength: 1
+
+    InvalidRequestError:
+      description: Query-shape request rejected before authorization.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          properties:
+            code:
+              type: string
+              const: INVALID_REQUEST
+      unevaluatedProperties: false
+
+    AuthenticationRequiredError:
+      description: Missing HTTP Basic credentials.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          properties:
+            code:
+              type: string
+              const: AUTHENTICATION_REQUIRED
+      unevaluatedProperties: false
+
+    InvalidCredentialsError:
+      description: Invalid HTTP Basic credentials.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          properties:
+            code:
+              type: string
+              const: INVALID_CREDENTIALS
+      unevaluatedProperties: false
+
+    DeniedOperationError:
+      description: Profile assignment or operation policy denied discovery.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          required: [policy_version]
+          properties:
+            code:
+              type: string
+              const: DENIED_OPERATION
+            message:
+              type: string
+              const: The operation is not allowed by policy
+      unevaluatedProperties: false
+
+    InternalErrorEnvelope:
+      description: Sanitized internal service failure.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          properties:
+            code:
+              type: string
+              const: INTERNAL_ERROR
+      unevaluatedProperties: false
+
+    CapabilityNotImplementedError:
+      description: Aggregate is unavailable in the selected adapter capability set.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          properties:
+            code:
+              type: string
+              const: CAPABILITY_NOT_IMPLEMENTED
+      unevaluatedProperties: false
+
+    CapacityExceededError:
+      description: Bounded core response capacity is exhausted.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          properties:
+            code:
+              type: string
+              const: CAPACITY_EXCEEDED
+      unevaluatedProperties: false
+
+    ServiceUnavailableError:
+      description: A mandatory non-database service dependency is unavailable.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          properties:
+            code:
+              type: string
+              const: SERVICE_UNAVAILABLE
+      unevaluatedProperties: false
+
+    RepresentationNotAcceptableError:
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          required: [policy_version]
+          properties:
+            code:
+              type: string
+              const: REPRESENTATION_NOT_ACCEPTABLE
+      unevaluatedProperties: false
+
+    QueryShapeListResult:
+      description: >-
+        Complete, deterministically ordered public aggregate shapes from one
+        immutable policy snapshot. The list is never partial. Shapes are sorted
+        by their case-sensitive public names in ascending UTF-8 byte order and
+        names are unique within the profile.
+      type: object
+      additionalProperties: false
+      required: [policy_profile, policy_version, datasource, adapter, shapes]
+      properties:
+        policy_profile:
+          type: string
+          minLength: 1
+        policy_version:
+          type: string
+          minLength: 1
+        datasource:
+          type: string
+          minLength: 1
+        adapter:
+          type: string
+          const: mysql8
+        shapes:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/AggregateQueryShape"
+      x-quordon-semantic-validation:
+        - Public shape names are unique by exact code-point comparison and sorted by UTF-8 bytes.
+        - The 1000-shape protocol maximum is enforced during policy startup validation.
+        - Every returned shape passed strict startup validation and preserves the exact public identifier spelling from the policy snapshot.
+        - Datasource-dependent identifier canonicalization is deliberately not performed during discovery; a request constructed with the disclosed spelling is normalized only on the aggregate execution path.
+        - Returned client-visible query signatures do not overlap; shape names and omitted execution-only controls cannot make an ambiguous policy valid.
+        - The complete response must fit the effective max_result_bytes limit; an incompatible policy is rejected before startup readiness.
+
+    QueryShapeListResultV2:
+      description: >-
+        Complete immutable public shape set for clients that explicitly opt in
+        to the time-bucket discriminator. It retains all v1 ordering, policy,
+        disclosure, snapshot, and response-budget invariants.
+      type: object
+      additionalProperties: false
+      required: [policy_profile, policy_version, datasource, adapter, shapes]
+      properties:
+        policy_profile:
+          type: string
+          minLength: 1
+        policy_version:
+          type: string
+          minLength: 1
+        datasource:
+          type: string
+          minLength: 1
+        adapter:
+          type: string
+          const: mysql8
+        shapes:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/AggregateQueryShapeV2"
+
+    QueryShapeListResultV3:
+      description: >-
+        Complete immutable public shape set for clients that explicitly opt in
+        to the keyset discriminator. It retains all v2 ordering, policy,
+        disclosure, snapshot, and response-budget invariants.
+      type: object
+      additionalProperties: false
+      required: [policy_profile, policy_version, datasource, adapter, shapes]
+      properties:
+        policy_profile:
+          type: string
+          minLength: 1
+        policy_version:
+          type: string
+          minLength: 1
+        datasource:
+          type: string
+          minLength: 1
+        adapter:
+          type: string
+          minLength: 1
+        shapes:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/QueryShapeV3"
+
+    QueryShapeV3:
+      description: Closed operation-discriminated aggregate or keyset construction shape.
+      oneOf:
+        - $ref: "#/components/schemas/AggregateQueryShapeV2"
+        - $ref: "#/components/schemas/KeysetSelectQueryShape"
+      discriminator:
+        propertyName: operation
+        mapping:
+          aggregate: "#/components/schemas/AggregateQueryShapeV2"
+          select_keyset: "#/components/schemas/KeysetSelectQueryShape"
+
+    KeysetSelectQueryShape:
+      description: Disclosure-safe construction template for one curated keyset query.
+      type: object
+      additionalProperties: false
+      required: [name, operation, query]
+      properties:
+        name:
+          $ref: "#/components/schemas/Identifier"
+        description:
+          $ref: "#/components/schemas/PublicDescription"
+        operation:
+          type: string
+          const: select_keyset
+        query:
+          $ref: "#/components/schemas/KeysetSelectQueryShapeSpec"
+
+    KeysetSelectQueryShapeSpec:
+      type: object
+      additionalProperties: false
+      required: [source, projection, order_by, maximum_limit]
+      properties:
+        source:
+          $ref: "#/components/schemas/ResourceRef"
+        projection:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/KeysetFieldSelection"
+        filter:
+          $ref: "#/components/schemas/KeysetFilterShapeExpression"
+        order_by:
+          type: array
+          minItems: 1
+          maxItems: 8
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/KeysetSort"
+        maximum_limit:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+
+    KeysetFieldSelection:
+      type: object
+      additionalProperties: false
+      required: [kind, field]
+      properties:
+        kind:
+          type: string
+          const: field
+        field:
+          $ref: "#/components/schemas/Identifier"
+        alias:
+          $ref: "#/components/schemas/Identifier"
+
+    KeysetSort:
+      type: object
+      additionalProperties: false
+      required: [field, direction]
+      properties:
+        field:
+          $ref: "#/components/schemas/Identifier"
+        direction:
+          type: string
+          enum: [asc, desc]
+
+    KeysetFilterShapeExpression:
+      oneOf:
+        - $ref: "#/components/schemas/KeysetFilterShapePredicate"
+        - $ref: "#/components/schemas/KeysetFilterShapeGroup"
+      discriminator:
+        propertyName: kind
+        mapping:
+          predicate: "#/components/schemas/KeysetFilterShapePredicate"
+          group: "#/components/schemas/KeysetFilterShapeGroup"
+
+    KeysetFilterShapePredicate:
+      oneOf:
+        - $ref: "#/components/schemas/KeysetComparisonFilterShapePredicate"
+        - $ref: "#/components/schemas/KeysetLikeFilterShapePredicate"
+        - $ref: "#/components/schemas/KeysetSetFilterShapePredicate"
+        - $ref: "#/components/schemas/KeysetNullFilterShapePredicate"
+      discriminator:
+        propertyName: operator
+        mapping:
+          eq: "#/components/schemas/KeysetComparisonFilterShapePredicate"
+          ne: "#/components/schemas/KeysetComparisonFilterShapePredicate"
+          lt: "#/components/schemas/KeysetComparisonFilterShapePredicate"
+          lte: "#/components/schemas/KeysetComparisonFilterShapePredicate"
+          gt: "#/components/schemas/KeysetComparisonFilterShapePredicate"
+          gte: "#/components/schemas/KeysetComparisonFilterShapePredicate"
+          like: "#/components/schemas/KeysetLikeFilterShapePredicate"
+          in: "#/components/schemas/KeysetSetFilterShapePredicate"
+          not_in: "#/components/schemas/KeysetSetFilterShapePredicate"
+          is_null: "#/components/schemas/KeysetNullFilterShapePredicate"
+          is_not_null: "#/components/schemas/KeysetNullFilterShapePredicate"
+
+    KeysetComparisonFilterShapePredicate:
+      type: object
+      additionalProperties: false
+      required: [kind, field, operator, value_types]
+      properties:
+        kind: {type: string, const: predicate}
+        field:
+          $ref: "#/components/schemas/Identifier"
+        operator:
+          type: string
+          enum: [eq, ne, lt, lte, gt, gte]
+        value_types:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            $ref: "#/components/schemas/PortableValueType"
+
+    KeysetLikeFilterShapePredicate:
+      type: object
+      additionalProperties: false
+      required: [kind, field, operator, value_types]
+      properties:
+        kind: {type: string, const: predicate}
+        field:
+          $ref: "#/components/schemas/Identifier"
+        operator: {type: string, const: like}
+        value_types:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            type: string
+            enum: [string, bytes]
+
+    KeysetSetFilterShapePredicate:
+      type: object
+      additionalProperties: false
+      required: [kind, field, operator, value_types]
+      properties:
+        kind: {type: string, const: predicate}
+        field:
+          $ref: "#/components/schemas/Identifier"
+        operator: {type: string, enum: [in, not_in]}
+        value_types:
+          oneOf:
+            - {type: array, minItems: 1, maxItems: 200, items: {type: string, const: boolean}}
+            - {type: array, minItems: 1, maxItems: 200, items: {type: string, const: integer}}
+            - {type: array, minItems: 1, maxItems: 200, items: {type: string, const: decimal}}
+            - {type: array, minItems: 1, maxItems: 200, items: {type: string, const: string}}
+            - {type: array, minItems: 1, maxItems: 200, items: {type: string, const: uuid}}
+            - {type: array, minItems: 1, maxItems: 200, items: {type: string, const: date}}
+            - {type: array, minItems: 1, maxItems: 200, items: {type: string, const: datetime}}
+            - {type: array, minItems: 1, maxItems: 200, items: {type: string, const: bytes}}
+
+    KeysetNullFilterShapePredicate:
+      type: object
+      additionalProperties: false
+      required: [kind, field, operator, value_types]
+      properties:
+        kind: {type: string, const: predicate}
+        field:
+          $ref: "#/components/schemas/Identifier"
+        operator: {type: string, enum: [is_null, is_not_null]}
+        value_types:
+          type: array
+          maxItems: 0
+
+    KeysetFilterShapeGroup:
+      type: object
+      additionalProperties: false
+      required: [kind, operator, expressions]
+      properties:
+        kind: {type: string, const: group}
+        operator: {type: string, enum: [and, or]}
+        expressions:
+          type: array
+          minItems: 2
+          maxItems: 200
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/KeysetFilterShapeExpression"
+
+    AggregateQueryShapeV2:
+      type: object
+      additionalProperties: false
+      required: [name, operation, query]
+      properties:
+        name:
+          $ref: "#/components/schemas/Identifier"
+        description:
+          $ref: "#/components/schemas/PublicDescription"
+        operation:
+          type: string
+          const: aggregate
+        query:
+          $ref: "#/components/schemas/AggregateQueryShapeSpecV2"
+
+    AggregateQueryShapeSpecV2:
+      oneOf:
+        - $ref: "#/components/schemas/ScalarAggregateQueryShapeSpec"
+        - $ref: "#/components/schemas/GroupedAggregateQueryShapeSpecV2"
+      discriminator:
+        propertyName: mode
+        mapping:
+          scalar: "#/components/schemas/ScalarAggregateQueryShapeSpec"
+          grouped: "#/components/schemas/GroupedAggregateQueryShapeSpecV2"
+
+    AggregateQueryShape:
+      description: >-
+        Public metadata and the validated construction template for exactly one
+        operator-curated aggregate policy shape. Execution-only admission
+        members are deliberately absent.
+      type: object
+      additionalProperties: false
+      required: [name, operation, query]
+      properties:
+        name:
+          $ref: "#/components/schemas/Identifier"
+        description:
+          $ref: "#/components/schemas/PublicDescription"
+        operation:
+          type: string
+          const: aggregate
+        query:
+          $ref: "#/components/schemas/AggregateQueryShapeSpec"
+      x-quordon-result-shape:
+        column-order: query.projection
+        dimension-column-name: source-field-name
+        measure-column-name: explicit-alias
+        portable-types: resolved-at-execution-and-returned-in-AggregateResult.columns
+        datasource-metadata-lookup-during-discovery: forbidden
+      x-quordon-policy-source:
+        name: profiles.<profile>.query.aggregate_shapes[].name
+        description: profiles.<profile>.query.aggregate_shapes[].public_description
+        public-description-is-explicitly-operator-controlled: true
+        public-description-config-validation:
+          optional: true
+          when-present-yaml-tag: "!!str"
+          explicit-null: forbidden
+          empty-string: forbidden
+          maximum-code-points: 512
+          unicode-cc-control-characters-c0-and-c1: forbidden
+          unicode-format-characters-cf: allowed
+          aliases: dereference-before-tag-and-value-validation
+          merge-keys-in-aggregate-shape: forbidden
+          unknown-members: forbidden
+          invalid-result: reject-process-startup
+          required-negative-fixtures:
+            - boolean-instead-of-string
+            - numeric-instead-of-string
+            - explicit-null
+            - empty-string
+            - overlong-string
+            - control-character
+            - alias-to-wrong-type
+            - merge-key
+
+    PublicDescription:
+      description: >-
+        Optional operator-authored public human description sourced only from
+        the explicitly named public_description policy member. It is data, not
+        an instruction channel, and is bounded to limit response amplification.
+      type: string
+      minLength: 1
+      maxLength: 512
+      pattern: '^[^\x00-\x1F\x7F-\x9F]+$'
+
+    AggregateQueryShapeSpec:
+      description: Closed union of scalar and grouped aggregate construction templates.
+      oneOf:
+        - $ref: "#/components/schemas/ScalarAggregateQueryShapeSpec"
+        - $ref: "#/components/schemas/GroupedAggregateQueryShapeSpec"
+      discriminator:
+        propertyName: mode
+        mapping:
+          scalar: "#/components/schemas/ScalarAggregateQueryShapeSpec"
+          grouped: "#/components/schemas/GroupedAggregateQueryShapeSpec"
+      x-quordon-request-construction:
+        copied-verbatim:
+          - mode
+          - source
+          - projection
+          - filter.kind
+          - filter.field
+          - filter.operator
+          - filter.expressions
+          - order_by
+        filter-values: >-
+          Replace each predicate value_types array with a values array of the
+          same length and order. Each values item must contain the corresponding
+          exact type discriminator and one OpenAPI-valid value of that type.
+        scalar-limit: omitted
+        grouped-limit: integer-between-1-and-maximum_limit-inclusive
+        additional-members: forbidden
+
+    ScalarAggregateQueryShapeSpec:
+      description: Scalar aggregate template with no grouping, ordering, or limit.
+      type: object
+      additionalProperties: false
+      required: [mode, source, projection]
+      properties:
+        mode:
+          type: string
+          const: scalar
+        source:
+          $ref: "#/components/schemas/ResourceRef"
+        projection:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/AggregateMeasureDiscovery"
+        filter:
+          $ref: "#/components/schemas/AggregateFilterShapeExpression"
+
+    GroupedAggregateQueryShapeSpec:
+      description: >-
+        Grouped aggregate template. maximum_limit is a construction constraint,
+        not a member copied into the executable aggregate request.
+      type: object
+      additionalProperties: false
+      required: [mode, source, projection, maximum_limit]
+      properties:
+        mode:
+          type: string
+          const: grouped
+        source:
+          $ref: "#/components/schemas/ResourceRef"
+        projection:
+          type: array
+          minItems: 2
+          maxItems: 100
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/AggregateOutputV1"
+          allOf:
+            - contains:
+                $ref: "#/components/schemas/AggregateDimensionDiscovery"
+              minContains: 1
+            - contains:
+                $ref: "#/components/schemas/AggregateMeasureDiscovery"
+              minContains: 1
+        filter:
+          $ref: "#/components/schemas/AggregateFilterShapeExpression"
+        order_by:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/AggregateOrderV1"
+        maximum_limit:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+
+    GroupedAggregateQueryShapeSpecV2:
+      description: Grouped discovery template with explicitly negotiated UTC time buckets.
+      type: object
+      additionalProperties: false
+      required: [mode, source, projection, maximum_limit]
+      properties:
+        mode:
+          type: string
+          const: grouped
+        source:
+          $ref: "#/components/schemas/ResourceRef"
+        projection:
+          type: array
+          minItems: 2
+          maxItems: 100
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/AggregateOutputV2"
+          allOf:
+            - contains:
+                $ref: "#/components/schemas/AggregateGroupingOutputV2"
+              minContains: 1
+            - contains:
+                $ref: "#/components/schemas/AggregateMeasureDiscovery"
+              minContains: 1
+        filter:
+          $ref: "#/components/schemas/AggregateFilterShapeExpression"
+        order_by:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/AggregateOrderV2"
+        maximum_limit:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+
+    AggregateOutputV1:
+      oneOf:
+        - $ref: "#/components/schemas/AggregateDimensionDiscovery"
+        - $ref: "#/components/schemas/AggregateMeasureDiscovery"
+      discriminator:
+        propertyName: kind
+        mapping:
+          dimension: "#/components/schemas/AggregateDimensionDiscovery"
+          measure: "#/components/schemas/AggregateMeasureDiscovery"
+
+    AggregateOrderV1:
+      oneOf:
+        - $ref: "#/components/schemas/DimensionOrderDiscovery"
+        - $ref: "#/components/schemas/MeasureOrderDiscovery"
+      discriminator:
+        propertyName: kind
+        mapping:
+          dimension: "#/components/schemas/DimensionOrderDiscovery"
+          measure: "#/components/schemas/MeasureOrderDiscovery"
+
+    AggregateOutputV2:
+      oneOf:
+        - $ref: "#/components/schemas/AggregateDimensionDiscovery"
+        - $ref: "#/components/schemas/TimeBucketDimensionDiscovery"
+        - $ref: "#/components/schemas/AggregateMeasureDiscovery"
+      discriminator:
+        propertyName: kind
+        mapping:
+          dimension: "#/components/schemas/AggregateDimensionDiscovery"
+          time_bucket: "#/components/schemas/TimeBucketDimensionDiscovery"
+          measure: "#/components/schemas/AggregateMeasureDiscovery"
+
+    AggregateGroupingOutputV2:
+      oneOf:
+        - $ref: "#/components/schemas/AggregateDimensionDiscovery"
+        - $ref: "#/components/schemas/TimeBucketDimensionDiscovery"
+
+    AggregateDimensionDiscovery:
+      type: object
+      additionalProperties: false
+      required: [kind, field]
+      properties:
+        kind: {type: string, const: dimension}
+        field:
+          $ref: "#/components/schemas/Identifier"
+
+    TimeBucketDimensionDiscovery:
+      type: object
+      additionalProperties: false
+      required: [kind, field, unit, timezone, alias]
+      properties:
+        kind: {type: string, const: time_bucket}
+        field:
+          $ref: "#/components/schemas/Identifier"
+        unit:
+          type: string
+          enum: [hour, day, week, month]
+        timezone:
+          type: string
+          const: UTC
+        alias:
+          $ref: "#/components/schemas/Identifier"
+
+    AggregateMeasureDiscovery:
+      oneOf:
+        - $ref: "#/components/schemas/CountAllMeasureDiscovery"
+        - $ref: "#/components/schemas/FieldAggregateMeasureDiscovery"
+      discriminator:
+        propertyName: function
+        mapping:
+          count_all: "#/components/schemas/CountAllMeasureDiscovery"
+          count: "#/components/schemas/FieldAggregateMeasureDiscovery"
+          count_distinct: "#/components/schemas/FieldAggregateMeasureDiscovery"
+          min: "#/components/schemas/FieldAggregateMeasureDiscovery"
+          max: "#/components/schemas/FieldAggregateMeasureDiscovery"
+          sum: "#/components/schemas/FieldAggregateMeasureDiscovery"
+          avg: "#/components/schemas/FieldAggregateMeasureDiscovery"
+
+    CountAllMeasureDiscovery:
+      type: object
+      additionalProperties: false
+      required: [kind, function, alias]
+      properties:
+        kind: {type: string, const: measure}
+        function: {type: string, const: count_all}
+        alias:
+          $ref: "#/components/schemas/Identifier"
+
+    FieldAggregateMeasureDiscovery:
+      type: object
+      additionalProperties: false
+      required: [kind, function, field, alias]
+      properties:
+        kind: {type: string, const: measure}
+        function:
+          type: string
+          enum: [count, count_distinct, min, max, sum, avg]
+        field:
+          $ref: "#/components/schemas/Identifier"
+        alias:
+          $ref: "#/components/schemas/Identifier"
+
+    AggregateOrderV2:
+      oneOf:
+        - $ref: "#/components/schemas/DimensionOrderDiscovery"
+        - $ref: "#/components/schemas/TimeBucketOrderDiscovery"
+        - $ref: "#/components/schemas/MeasureOrderDiscovery"
+      discriminator:
+        propertyName: kind
+        mapping:
+          dimension: "#/components/schemas/DimensionOrderDiscovery"
+          time_bucket: "#/components/schemas/TimeBucketOrderDiscovery"
+          measure: "#/components/schemas/MeasureOrderDiscovery"
+
+    DimensionOrderDiscovery:
+      type: object
+      additionalProperties: false
+      required: [kind, field, direction]
+      properties:
+        kind: {type: string, const: dimension}
+        field:
+          $ref: "#/components/schemas/Identifier"
+        direction:
+          type: string
+          enum: [asc, desc]
+
+    TimeBucketOrderDiscovery:
+      type: object
+      additionalProperties: false
+      required: [kind, alias, direction]
+      properties:
+        kind: {type: string, const: time_bucket}
+        alias:
+          $ref: "#/components/schemas/Identifier"
+        direction:
+          type: string
+          enum: [asc, desc]
+
+    MeasureOrderDiscovery:
+      type: object
+      additionalProperties: false
+      required: [kind, alias, direction]
+      properties:
+        kind: {type: string, const: measure}
+        alias:
+          $ref: "#/components/schemas/Identifier"
+        direction:
+          type: string
+          enum: [asc, desc]
+
+    AggregateFilterShapeExpression:
+      description: >-
+        Recursive filter construction template. It contains placeholder types
+        and arity but never bind values.
+      oneOf:
+        - $ref: "#/components/schemas/AggregateFilterShapePredicate"
+        - $ref: "#/components/schemas/AggregateFilterShapeGroup"
+      discriminator:
+        propertyName: kind
+        mapping:
+          predicate: "#/components/schemas/AggregateFilterShapePredicate"
+          group: "#/components/schemas/AggregateFilterShapeGroup"
+      x-quordon-semantic-validation:
+        - Predicate operator selects exactly one predicate branch after kind selects predicate.
+        - Runtime/config validation applies the effective max_expression_depth, max_predicates, and max_parameters limits.
+        - Normalized duplicate group children are forbidden before the policy snapshot is accepted.
+
+    AggregateFilterShapePredicate:
+      description: Operator-discriminated predicate template.
+      oneOf:
+        - $ref: "#/components/schemas/AggregateSingleValueFilterShape"
+        - $ref: "#/components/schemas/AggregateSetFilterShape"
+        - $ref: "#/components/schemas/AggregateNullFilterShape"
+      discriminator:
+        propertyName: operator
+        mapping:
+          eq: "#/components/schemas/AggregateSingleValueFilterShape"
+          ne: "#/components/schemas/AggregateSingleValueFilterShape"
+          lt: "#/components/schemas/AggregateSingleValueFilterShape"
+          lte: "#/components/schemas/AggregateSingleValueFilterShape"
+          gt: "#/components/schemas/AggregateSingleValueFilterShape"
+          gte: "#/components/schemas/AggregateSingleValueFilterShape"
+          like: "#/components/schemas/AggregateSingleValueFilterShape"
+          in: "#/components/schemas/AggregateSetFilterShape"
+          not_in: "#/components/schemas/AggregateSetFilterShape"
+          is_null: "#/components/schemas/AggregateNullFilterShape"
+          is_not_null: "#/components/schemas/AggregateNullFilterShape"
+
+    AggregateSingleValueFilterShape:
+      description: Predicate template requiring exactly one typed value.
+      type: object
+      additionalProperties: false
+      required: [kind, field, operator, value_types]
+      properties:
+        kind:
+          type: string
+          const: predicate
+        field:
+          $ref: "#/components/schemas/Identifier"
+        operator:
+          type: string
+          enum: [eq, ne, lt, lte, gt, gte, like]
+        value_types:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            $ref: "#/components/schemas/PortableValueType"
+
+    AggregateSetFilterShape:
+      description: Predicate template requiring a fixed non-empty list of typed values.
+      type: object
+      additionalProperties: false
+      required: [kind, field, operator, value_types]
+      properties:
+        kind:
+          type: string
+          const: predicate
+        field:
+          $ref: "#/components/schemas/Identifier"
+        operator:
+          type: string
+          enum: [in, not_in]
+        value_types:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/PortableValueType"
+
+    AggregateNullFilterShape:
+      description: Null-check template with no bind values.
+      type: object
+      additionalProperties: false
+      required: [kind, field, operator, value_types]
+      properties:
+        kind:
+          type: string
+          const: predicate
+        field:
+          $ref: "#/components/schemas/Identifier"
+        operator:
+          type: string
+          enum: [is_null, is_not_null]
+        value_types:
+          type: array
+          maxItems: 0
+
+    AggregateFilterShapeGroup:
+      description: Parenthesized AND or OR construction template.
+      type: object
+      additionalProperties: false
+      required: [kind, operator, expressions]
+      properties:
+        kind:
+          type: string
+          const: group
+        operator:
+          type: string
+          enum: [and, or]
+        expressions:
+          type: array
+          minItems: 2
+          maxItems: 200
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/AggregateFilterShapeExpression"
+
+    PortableValueType:
+      description: Exact type discriminator required for one future bound value.
+      type: string
+      enum: [boolean, integer, decimal, string, uuid, date, datetime, bytes]

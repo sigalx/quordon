@@ -1,0 +1,34 @@
+name: quordon
+
+services:
+  mysql:
+    image: mysql:8.4
+    # Keep logging enabled after the entrypoint restarts its temporary init DB.
+    # Only isolated synthetic fixtures use this observation journal.
+    command: ["--general-log=ON", "--log-output=TABLE"]
+    environment:
+      MYSQL_ROOT_PASSWORD: root-password
+      MYSQL_DATABASE: application
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot-password"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    volumes:
+      - ./testdata/mysql-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  quordon:
+    image: quordon:integration
+    build:
+      context: .
+    user: "${QUORDON_UID:-1000}:${QUORDON_GID:-1000}"
+    environment:
+      QUORDON_CONFIG: /etc/quordon/policy.yaml
+      QUORDON_EXPLAIN_PASSWORD_HASH: $$2a$$10$$JmVuhTv14Yi/NhKOENYDwuk4iRG5GwtnMQQ1BoPnBEcNvrx52O3Uu
+    ports:
+      - "127.0.0.1:18080:8080"
+    volumes:
+      - ./config/policy.integration.yaml:/etc/quordon/policy.yaml:ro
+    depends_on:
+      mysql:
+        condition: service_healthy

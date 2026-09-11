@@ -1,0 +1,1629 @@
+---
+openapi: 3.1.0
+info:
+  title: Quordon Keyset Pagination API
+  version: 1.1.0
+  description: >-
+    Executable contract for policy-curated keyset pagination of bounded SELECT
+    results and its explicitly negotiated query-shape discovery representation.
+    It is referenced by openapi.yaml and is validated bidirectionally against
+    the strict decoder and runtime handlers.
+
+x-quordon-status: stable
+x-quordon-runtime-contract: true
+x-quordon-capability:
+  operation: select_keyset
+  owner: adapter-interface
+  separately-granted-from-select: true
+  advertised-by-current-runtime: true
+  query-shape-discovery:
+    operation: list_query_shapes
+    representation: application/vnd.quordon.query-shapes.v3+json
+    explicit-client-opt-in: true
+x-quordon-implementation-invariants:
+  - add-the-keyset-request-and-response-branches-to-openapi.yaml
+  - add-select_keyset-to-the-root-capability-enum
+  - add-v3-negotiation-and-shape-union-to-query-shapes.yaml
+  - publish-representation-not-acceptable-in-the-root-stable-error-code-list
+  - preserve-legacy-select-and-query-shape-representations
+  - register-queries-select-by-path-and-route-every-method-through-the-exact-post-guard
+  - add-bounded-strict-keyset-decoder-and-semantic-validation
+  - add-strict-presence-aware-policy-configuration
+  - add-distinct-operation-bound-authorization-token
+  - add-policy-and-adapter-capability-support
+  - aggregate-and-keyset-shape-count-is-1-through-1000
+  - validate-capability-interface-compatibility-at-startup
+  - add-mysql8-column-metadata-plan-admission-and-cursor-compilation
+  - keep-portable-temporal-grammar-and-validation-outside-concrete-adapters
+  - keep-physical-temporal-ranges-precision-casts-and-driver-bindings-inside-concrete-adapters
+  - add-bounded-cursor-and-row-response-encoding
+  - add-positional-column-aware-row-cell-validation-before-completion-audit
+  - reject-null-row-collections-and-out-of-range-temporal-cells-before-success-encoding
+  - add-positive-and-negative-runtime-and-openapi-3.1-contract-fixtures
+  - add-unit-race-vet-and-mysql8-integration-coverage
+  - update-api-policy-security-operations-testing-and-backlog-documentation
+x-quordon-contract-fixtures:
+  openapi-valid-requests:
+    - first-page-with-single-integer-key
+    - next-page-with-maximum-signed-integer-key
+    - next-page-with-maximum-unsigned-integer-key
+    - next-page-with-composite-string-and-bytes-key
+    - next-page-with-date-datetime-and-utc-timestamp-key
+    - exact-integral-decimal-and-exponent-filter-values-accepted-as-json-integers
+    - integral-limit-written-as-1-point-0-or-1e2
+  schema-invalid-requests:
+    - missing-or-null-required-member-at-every-level
+    - explicit-null-for-optional-filter
+    - legacy-offset-in-keyset-query
+    - missing-or-empty-order-by
+    - empty-projection-or-filter-group
+    - first-page-with-cursor
+    - after-page-without-or-empty-cursor
+    - unknown-page-kind-or-cursor-type
+    - cursor-number-instead-of-canonical-string
+    - malformed-integer-temporal-string-or-noncanonical-base64
+    - cursor-array-above-protocol-maximum
+    - quoted-limit-or-nonintegral-limit
+    - unknown-or-case-folded-member-at-every-level
+    - branch-specific-extra-member
+  strict-transport-cases:
+    - invalid-utf8-before-json-decode
+    - unpaired-high-or-low-unicode-surrogate-escape-in-any-json-string
+    - duplicate-member-at-every-object-level
+    - non-object-top-level
+    - hard-body-limit-before-materialization
+    - wrong-or-missing-content-type-before-body-read
+    - every-unsupported-method-is-405-and-head-is-a-bodyless-405-with-stable-code-header
+  semantic-and-security-cases:
+    - exact-duplicate-projection-and-filter-terms-and-repeated-order-fields-rejected-before-datasource
+    - integer-cursor-outside-portable-int64-through-uint64-envelope-is-400-before-datasource
+    - invalid-calendar-offset-timestamp-infinity-or-more-than-nine-fraction-digits-is-400-before-datasource
+    - cursor-arity-and-types-match-policy-key
+    - order-is-the-exact-policy-owned-unique-key
+    - every-key-field-is-projected-and-field-authorized
+    - semantics-independent-shape-mismatch-is-denied-before-datasource
+    - named-shape-matches-the-complete-normalized-query
+    - absent-unassigned-or-mismatched-shape-is-uniform-403-without-datasource-call
+    - unsupported-capability-does-not-call-datasource
+    - wrong-operation-or-zero-token-does-not-call-adapter
+    - nullable-or-unsupported-key-is-422-before-select
+    - invisible-prefix-functional-or-wrong-order-index-is-422-before-select
+    - non-round-trippable-key-column-is-422-before-select
+    - enum-set-bit-text-and-blob-cursor-key-types-are-422-before-select
+    - filter-value-type-or-operator-incompatible-with-source-column-is-422-before-explain
+    - heterogeneous-set-placeholder-types-reject-policy-startup
+    - optional-index-admission-and-per-node-plan-bound-are-checked-before-select
+    - strict-zero-table-impossible-plan-produces-an-empty-final-page
+    - malformed-or-unrecognized-zero-table-plan-is-422-before-select
+    - overlapping-keyset-shapes-with-distinct-names-or-maximum-limits-reject-startup
+    - request-and-policy-filter-canonicalization-use-the-same-linear-bounded-digest
+    - keyset-shape-exceeding-any-effective-profile-limit-rejects-startup
+    - worst-case-after-page-bind-count-exceeding-effective-max-parameters-rejects-startup
+    - cursor-values-are-bind-parameters-and-never-sql-or-audit-text
+    - cursor-parameter-expansion-is-charged-before-adapter-action
+    - requested-page-limit-below-shape-maximum-is-bound-immutably-and-drives-limit-plus-one
+    - legacy-and-keyset-success-responses-match-the-selected-request-branch
+    - cross-branch-success-response-is-500-before-http-200-write
+    - worst-case-server-issued-cursor-fits-a-canonical-next-request-before-select
+    - float-double-or-real-projection-is-422-before-select
+    - zerofill-integer-or-decimal-projection-is-422-before-select
+    - no-progress-byte-overflow-is-413
+    - later-row-byte-overflow-returns-largest-complete-prefix-and-cursor
+    - oversized-packet-is-413-before-packet-materialization
+    - timeout-unavailable-upstream-capacity-and-audit-failure-classification
+    - disconnected-client-does-not-cancel-denial-or-completion-audit
+    - repeated-pages-have-no-cross-request-snapshot-guarantee
+  valid-responses:
+    - empty-final-page-with-rows-as-an-empty-array-never-null
+    - partial-final-page-without-next-cursor
+    - full-page-with-next-integer-cursor
+    - byte-truncated-page-with-next-composite-cursor
+  invalid-responses:
+    - unknown-case-folded-or-null-member
+    - null-rows-instead-of-an-array
+    - duplicate-member-rejected-by-raw-token-or-typed-encoder-invariant
+    - integer-column-with-base64-encoding
+    - bytes-column-with-string-encoding
+    - has-more-without-next-cursor
+    - next-cursor-when-has-more-is-false
+    - truncated-and-has-more-disagree
+    - has-more-with-zero-returned-rows
+    - cursor-json-number-instead-of-string
+    - row-count-does-not-match-rows
+    - cursor-does-not-match-last-row-key
+    - response-above-effective-byte-budget
+    - discovery-like-with-integer-value-type-is-schema-invalid
+    - discovery-in-with-heterogeneous-value-types-is-schema-invalid
+  semantic-invalid-response-cases:
+    - bytes-column-with-malformed-or-noncanonical-base64-cell
+    - integer-column-with-noncanonical-out-of-source-range-or-nonnumeric-cell
+    - decimal-column-with-nonfinite-exponent-or-malformed-cell
+    - date-or-datetime-column-with-invalid-calendar-or-noncanonical-cell
+    - temporal-cell-outside-the-concrete-adapter-source-range
+    - time-column-with-out-of-range-or-noncanonical-cell
+    - json-column-with-invalid-or-trailing-json-text-cell
+    - null-cell-for-nonnullable-column
+    - cell-valid-only-for-a-different-positional-column-type
+    - invalid-utf8-source-text-is-502-before-response-materialization
+  discovery-cases:
+    - v3-mixes-aggregate-v2-and-keyset-shapes-by-operation-discriminator
+    - keyset-shape-is-never-returned-in-v1-or-v2
+    - profile-with-keyset-shape-and-non-v3-client-receives-audited-406
+    - ordinary-aggregate-profile-accepts-v1-v2-and-v3
+    - time-bucket-profile-rejects-v1-and-accepts-v2-and-v3
+    - keyset-profile-rejects-v1-and-v2-and-accepts-v3
+    - discovery-denial-allows-only-denied-operation
+    - discovery-unavailable-allows-only-capacity-or-service-unavailable
+    - discovery-never-returns-index-plan-bound-or-cursor-values
+    - discovery-request-does-not-call-datasource-or-adapter
+    - repeated-extra-or-invalid-utf8-query-parameter-is-400-before-snapshot-access
+    - nonempty-handler-visible-get-body-is-400-before-profile-resolution
+
+security:
+  - basicAuth: []
+
+servers:
+  - url: /
+    description: Current-process routes without a version prefix.
+
+tags:
+  - name: Queries
+    description: Policy-authorized structured database operations.
+  - name: Discovery
+    description: Principal-scoped construction templates for authorized queries.
+
+paths:
+  /queries/select:
+    x-quordon-additive-contract-branch:
+      current-runtime-branch: SelectRequest-to-SelectResult
+      keyset-branch: KeysetSelectRequest-to-KeysetSelectResult
+      branch-selector: top-level-kind-equals-keyset
+      legacy-request-without-kind: unchanged
+      legacy-response-without-kind: unchanged
+      request-response-branch-binding:
+        json-schema-limitation: >-
+          OpenAPI validates one HTTP message at a time and cannot correlate the
+          selected request oneOf branch with the later success-response oneOf
+          branch.
+        handler-dispatch:
+          legacy-request: existing-select-handler-returning-only-SelectResult
+          keyset-request: keyset-select-handler-returning-only-KeysetSelectResult
+          independently-selecting-a-success-union-branch: forbidden
+        required-pairs:
+          SelectRequest: SelectResult
+          KeysetSelectRequest: KeysetSelectResult
+        cross-branch-success-response: forbidden
+        validation-time: after-typed-handler-result-before-success-completion-audit-or-http-write
+        invariant-failure:
+          status: 500
+          code: INTERNAL_ERROR
+          wrong-200-response-written: false
+          mandatory-bounded-completion-audit: internal-error
+        semantic-handler-fixtures:
+          - legacy-request-with-legacy-result-is-valid
+          - keyset-request-with-keyset-result-is-valid
+          - legacy-request-with-keyset-result-is-rejected
+          - keyset-request-with-legacy-result-is-rejected
+    x-quordon-method-contract:
+      allowed: [POST]
+      unsupported-method:
+        status: 405
+        code: METHOD_NOT_ALLOWED
+        before-authentication-and-audit: true
+        allow-header: POST
+      head-exception:
+        body: suppressed-by-go-net-http
+        stable-code-header: X-Quordon-Error-Code
+    post:
+      operationId: executeSelect
+      summary: Execute a bounded ordinary or policy-curated keyset SELECT
+      description: >-
+        Additive contract for the existing ordinary SELECT and the implemented
+        opt-in branch for reading one bounded page from an
+        exact operator-curated single-object SELECT shape, including trusted views. The client selects a
+        public shape and supplies only its filter values, page limit, and a
+        server-issued typed cursor for subsequent pages. It never selects an
+        index, SQL expression, source-work bound, or arbitrary ordering. The
+        operation is granted separately from ordinary select because repeated
+        keyset requests can enumerate every row exposed by the shape. A page is
+        evaluated in one read-only transaction, but separate HTTP requests do
+        not share a database snapshot. Concurrent inserts, deletes, or updates
+        to filter/order fields can therefore make a multi-page traversal omit
+        or revisit logical records; this endpoint is not an export snapshot.
+        MySQL requires SHOW VIEW for view plan preflight. SELECT-only datasource
+        credentials produce 503 DATABASE_UNAVAILABLE for an authorized view
+        before the main SELECT; plan preflight is never skipped.
+      x-quordon-status: stable
+      x-quordon-capability: select_keyset
+      x-quordon-exact-media-type: application/json
+      tags: [Queries]
+      x-quordon-processing-order:
+        - validate-exact-method-and-path
+        - authenticate-http-basic-credentials
+        - require-application-json-before-reading-the-body
+        - apply-hard-body-limit-before-full-read-or-tree-materialization
+        - reject-invalid-utf8-unpaired-surrogate-escapes-non-object-duplicate-case-folded-and-unknown-members-during-token-scan
+        - enforce-hard-depth-array-predicate-parameter-and-cursor-maxima-during-token-scan
+        - strictly-decode-the-keyset-discriminator-without-type-coercion
+        - validate-openapi-shape-presence-types-ranges-and-branch-members
+        - validate-static-query-semantics-and-exact-duplicate-terms
+        - validate-cursor-against-the-portable-integer-and-temporal-envelopes
+        - resolve-principal-profile-named-shape-and-effective-limits
+        - reject-semantics-independent-shape-mismatch-before-any-datasource-call
+        - check-cached-select-keyset-capability-before-any-datasource-call
+        - revalidate-structural-limits-under-the-effective-profile
+        - preflight-minimum-contract-response-size-before-capacity-or-datasource-work
+        - on-minimum-response-overflow-write-a-bounded-pre-token-completion-without-resources-or-fields
+        - obtain-identifier-semantics-without-resolving-the-requested-resource
+        - normalize-identifiers-and-match-the-complete-named-policy-shape
+        - authorize-resource-fields-features-order-and-cursor-and-mint-an-operation-bound-token
+        - write-mandatory-allow-decision-audit-without-values
+        - acquire-global-and-profile-capacity
+        - invoke-manager-with-only-the-operation-bound-token
+        - validate-requested-object-metadata-coordinates
+        - acquire-one-physical-connection-with-bounded-deadlines
+        - validate-projection-and-filter-fields-and-filter-type-compatibility-from-source-metadata
+        - derive-ordered-key-from-policy-order-by-and-validate-nonnull-column-types
+        - reject-float-double-or-real-projection-fields-before-select
+        - preflight-a-canonical-after-request-with-the-maximum-possible-server-issued-cursor
+        - save-set-and-verify-the-session-time-zone-as-utc
+        - open-a-read-only-repeatable-read-transaction
+        - compile-filter-cursor-and-limit-plus-one-without-index-hints
+        - explain-the-exact-statement-and-apply-plan-admission
+        - execute-the-exact-preflighted-statement-with-server-side-bindings
+        - incrementally-size-complete-rows-and-the-required-next-cursor-before-materialization
+        - finish-transaction-restore-session-time-zone-and-release-resources-with-bounded-cleanup
+        - validate-the-closed-response-and-write-mandatory-completion-audit
+        - send-the-response-only-after-successful-completion-audit
+      x-quordon-validation-boundary:
+        before-profile-resolution:
+          - exact-keyset-request-branch
+          - strict-json-and-openapi-shape
+          - protocol-structural-bounds
+          - static-identifier-and-duplicate-checks
+          - portable-integer-and-temporal-cursor-ranges
+        before-identifier-semantics-call:
+          - authenticated-and-assigned-profile
+          - exact-case-sensitive-public-shape-name
+          - configured-select-keyset-operation
+          - complete-nonidentifier-shape-members-match
+          - every-identifier-pair-is-equal-under-at-least-one-supported-semantics
+          - cached-adapter-capability
+          - effective-structural-limits
+          - minimum-response-envelope-budget
+        before-resource-lookup:
+          - complete-normalized-shape-match
+          - resource-field-order-and-cursor-policy-authorization
+          - operation-bound-token
+          - mandatory-allow-audit
+          - execution-capacity
+        invalid-input-datasource-call: forbidden
+        unsupported-capability-datasource-call: forbidden
+        denied-or-mismatched-shape-datasource-call: forbidden
+        semantics-independent-pre-match: >-
+          The named policy shape is selected locally. Presence, cardinality,
+          projection aliases, filter topology/operators/types/arity, order
+          directions, and maximum limit are compared before datasource access.
+          Portable identifiers are ASCII; a pair that is neither byte-equal nor
+          ASCII-case-equal cannot match under any supported MySQL identifier
+          semantics and is denied locally. Case-only candidates proceed to the
+          verified datasource semantics check.
+      x-quordon-strict-json-string-boundary:
+        validation-time: raw-token-scan-before-encoding-json-unmarshal
+        applies-to: every-json-string-token-in-the-request
+        escaped-high-surrogate: must-be-immediately-followed-by-an-escaped-low-surrogate
+        standalone-low-surrogate: reject-400-invalid-request
+        unpaired-high-surrogate: reject-400-invalid-request
+        decoder-replacement-character-from-malformed-escape: forbidden
+        datasource-call-on-rejection: forbidden
+      x-quordon-authorization-token:
+        type: AuthorizedKeysetSelect
+        opaque-and-immutable: true
+        minted-only-by-policy-package: true
+        reusable-for-other-operations: false
+        binds:
+          - principal
+          - credential-identifier
+          - profile
+          - policy-version-and-redacted-policy-hash
+          - public-shape-name-and-normalized-signature
+          - operation-select-keyset
+          - datasource-and-adapter
+          - canonical-schema-object-projection-filter-and-order
+          - exact-ordered-key-fields-and-directions
+          - normalized-requested-page-limit
+          - cursor-values-with-deep-copied-raw-payloads
+          - filter-values-with-deep-copied-raw-payloads
+          - policy-owned-optional-index-plan-bound-and-work-controls
+          - identifier-semantics-and-generation
+          - effective-limits-and-deadline
+        requested-page-limit-binding:
+          source: strictly-decoded-query-limit
+          shape-signature-member: false
+          immutable-token-field: true
+          validated-against:
+            - policy-shape-maximum-limit
+            - effective-max-rows
+            - platform-and-limit-plus-one-arithmetic-bound
+          compiled-row-bound: normalized-requested-page-limit-plus-one
+          raw-request-state-passed-to-manager-or-adapter: forbidden
+        manager-and-adapter-input: authorized-token-only
+        mutable-aliases: forbidden
+      x-quordon-policy-shape:
+        config-path: profiles.<profile>.query.keyset_select_shapes[]
+        required-public-members:
+          - name
+          - source
+          - projection
+          - order_by
+          - maximum_limit
+        optional-public-members:
+          - public_description
+          - filter
+        optional-execution-only-members:
+          - required_index
+          - allow_temporary_table
+          - allow_filesort
+        required-execution-only-members:
+          - maximum_rows_examined_per_scan
+        complete-signature-binds:
+          - source
+          - projection-order-fields-and-aliases
+          - full-filter-boolean-topology-fields-operators-types-and-arity
+          - full-order-fields-and-directions
+        excluded-from-signature:
+          - filter-values
+          - page-cursor-values
+          - requested-limit-below-the-policy-maximum
+        public-name-comparison: exact-case-sensitive-utf8
+        shape-name-and-signature-uniqueness: >-
+          Reject startup unless public names are exact-case-sensitive unique
+          and every pair of keyset shapes has a disjoint accepted request set.
+          Distinct names do not make otherwise identical shapes disjoint: the
+          comparison includes normalized source, projection, complete filter
+          tree, order, value types and arities, plus the intersecting 1 through
+          maximum_limit interval. If one request could match two shapes after
+          any supported identifier normalization, the policy is invalid.
+        canonical-filter-representation:
+          request-and-policy-algorithm: identical
+          traversal: single-bottom-up-bounded-pass
+          child-order-for-commutative-groups: fixed-length-child-digest-then-canonical-tie-breaker
+          digest-input-binds: kind-operator-field-value-types-arity-and-child-digests
+          filter-values: excluded
+          recursively-embedded-json-text: forbidden
+          repeated-subtree-recanonicalization: forbidden
+          digest-collision: compare-bounded-canonical-structure-before-match
+        yaml-validation:
+          unknown-members: forbidden
+          merge-keys: forbidden
+          explicit-null-for-non-null-members: forbidden
+          omitted-required-member: forbidden
+          empty-optional-string-is-not-absence: true
+          aliases: dereference-before-tag-presence-and-value-validation
+          string-members-require-yaml-string-token: true
+          integer-members-require-canonical-nonnegative-yaml-integer-token: true
+          maximum-limit-range: 1-through-effective-profile-max-rows
+          maximum-rows-examined-range: 1-through-uint64-maximum
+          identifier-and-array-maxima: same-as-openapi-request
+          required-index: optional-portable-identifier-with-1-through-128-ascii-bytes
+          public-description: 1-through-512-unicode-scalar-values-without-control-characters
+          exact-shape-structural-limits: >-
+            Projection count, order/key width, filter depth and predicate
+            count must fit the effective hard/profile limits because clients
+            cannot remove these members from the named shape.
+          after-page-parameter-limit: >-
+            Filter bind count plus N*(N+1)/2 cursor binds plus one implicit
+            LIMIT bind must fit the effective max_parameters using
+            overflow-safe arithmetic. Otherwise the shape cannot paginate and
+            startup is rejected.
+          predicate-type-rules: >-
+            Every in/not_in value_types item uses one identical discriminator;
+            like accepts only string or bytes. Violations are independent of
+            datasource metadata and reject startup.
+          invalid-result: reject-process-startup
+        immutable-policy-snapshot:
+          deep-copy-all-maps-slices-pointers-and-raw-values: true
+          accessors-return-no-mutable-aliases: true
+        policy-fingerprint:
+          canonical-redacted-policy: true
+          includes-public-and-execution-shape-controls: true
+          excludes-dsn-credentials-and-secret-values: true
+      x-quordon-key-invariants:
+        key-source: policy-order-by-and-source-column-metadata
+        complete-ordered-tuple-uniqueness: guaranteed-by-policy-author
+        unique-index-proof: not-required
+        generated-key-column: allowed-if-nonnull-and-supported-type
+        nullable-key-column: forbidden
+        key-fields-projected-exactly-once: true
+        key-field-alias: allowed
+        cursor-order: exact-order-by-field-order
+        supported-cursor-source-types:
+          - signed-or-unsigned-tinyint-smallint-mediumint-int-or-bigint
+          - char-or-varchar-with-server-verified-lossless-source-charset-to-utf8-round-trip
+          - binary-or-varbinary
+          - date
+          - datetime-with-source-fsp-zero-through-six
+          - timestamp-with-source-fsp-zero-through-six-and-verified-utc-session
+        unsupported-cursor-source-types:
+          - floating-point
+          - fixed-decimal
+          - time-or-year
+          - json
+          - spatial
+          - enum-or-set-because-their-sort-order-is-member-position-not-label-text
+          - bit
+          - tinytext-text-mediumtext-or-longtext
+          - tinyblob-blob-mediumblob-or-longblob
+        cursor-comparison:
+          position: strictly-after
+          mixed-directions: supported-by-server-generated-lexicographic-predicate
+          ascending-operator: greater-than
+          descending-operator: less-than
+          equality-prefix-required: true
+          all-values-server-side-bound: true
+        identifier-and-collation-semantics: verified-mysql-server-semantics
+        character-key-validation:
+          native-data-types: [char, varchar]
+          connection-encoding: canonical-utf8mb4
+          charset-and-collation-source: source-column-metadata-with-validated-server-owned-names
+          application-charset-allowlist: absent
+          incoming-cursor-and-string-or-uuid-filter-validation: bounded-constant-select-before-explain-or-source-select
+          incoming-round-trip: utf8-to-source-charset-to-utf8-with-byte-equality
+          returned-key-round-trip: source-key-to-utf8-to-source-charset-with-byte-equality
+          returned-key-validation: hidden-fixed-width-markers-in-bounded-page-before-materialization
+          lossy-conversion: reject-422-without-partial-success-or-skipping-rows
+          operand-conversion: only-bound-parameter-with-explicit-source-charset-and-collation
+          indexed-column-and-order-by-conversion: forbidden
+          preliminary-source-table-scan: forbidden
+          comparison-collation: exact-source-column-collation
+          enum-set-or-other-label-with-nontextual-ordering: reject-422
+        binary-key-validation:
+          native-data-types: [binary, varbinary]
+          exact-byte-round-trip: required
+          maximum-raw-value-bytes: 3072
+          maximum-standard-base64-characters: 4096
+        integer-key-validation:
+          native-types: [tinyint, smallint, mediumint, int, bigint]
+          portable-static-envelope: >-
+            Before any datasource call, parse the canonical decimal string
+            with exact overflow-safe integer arithmetic and require it to be
+            within -9223372036854775808 through 18446744073709551615. This is
+            the portable envelope used by every adapter. Values outside the
+            envelope are INVALID_REQUEST; each adapter owns its narrower
+            source-column signedness and width check after metadata lookup.
+          signedness-and-width: checked-against-exact-canonical-cursor-string
+          float64-conversion: forbidden
+        portable-temporal-key-validation:
+          adapter-neutral-envelope:
+            finite-year: 0001-through-9999
+            fractional-seconds: zero-through-nine-decimal-digits
+          date: canonical-yyyy-mm-dd
+          datetime: canonical-yyyy-mm-dd-space-hh-mm-ss-with-optional-fraction-and-no-time-zone
+          timestamp: canonical-rfc3339-utc-with-uppercase-t-and-z-and-optional-fraction
+          offset-or-lowercase-t-or-z: reject-400-before-datasource
+          infinity-or-negative-infinity: reject-400-before-datasource
+          concrete-source-range-precision-casts-and-bindings: adapter-owned-post-metadata-validation
+        mysql8-temporal-key-validation:
+          date-source-range: '1000-01-01 through 9999-12-31'
+          datetime-source-range: '1000-01-01 00:00:00 through 9999-12-31 23:59:59.499999'
+          timestamp-utc-source-range: '1970-01-01T00:00:01Z through 2038-01-19T03:14:07.499999Z'
+          source-fsp: zero-through-six-and-cursor-fraction-must-match-exactly
+          date-placeholder: adapter-owned-cast-as-date
+          datetime-or-timestamp-placeholder: adapter-owned-cast-as-datetime-with-exact-source-fsp
+          timestamp-binding: canonical-utc-cursor-is-converted-to-the-native-utc-driver-operand
+        cursor-schema-capacity: >-
+          Reject before SELECT unless every possible value of every key column
+          fits its cursor branch: at most 3072 Unicode scalar values for
+          CHAR/VARCHAR, 3072 raw bytes and 4096 canonical base64 characters for
+          BINARY/VARBINARY, 20 canonical characters for an integer, or the
+          bounded canonical representation of a supported temporal source.
+      x-quordon-projection-type-invariants:
+        metadata-validation-time: after-authorized-metadata-before-explain-or-select
+        fixed-point-decimal-native-types: [decimal, numeric]
+        floating-point-native-types: [float, double, real]
+        float-double-or-real-projection: reject-422-unsupported-query
+        float-double-or-real-mapped-to-portable-decimal: forbidden
+        zerofill-integer-or-decimal-projection: reject-422-unsupported-query
+        zerofill-validation-time: after-authorized-metadata-before-explain-or-select
+        reason: >-
+          The current closed response represents decimal as an exact canonical
+          fixed-point string and integers without display padding. MySQL
+          floating-point values are approximate, while ZEROFILL changes the
+          text-protocol representation. Neither can satisfy the closed lexical
+          contract without a separate normalization rule.
+      x-quordon-filter-type-boundary:
+        validation-time: after-authorized-metadata-before-explain-or-select
+        metadata-source: source-column-definition
+        missing-or-ambiguous-column: reject-422
+        dbms-implicit-cross-family-coercion: forbidden
+        adapter-owned-compatibility-matrix:
+          boolean: mysql-boolean-compatible-tinyint-only
+          integer: signed-or-unsigned-integral
+          decimal: fixed-exact-decimal
+          string: character-text-enum-or-set-with-server-verified-lossless-source-charset-round-trip
+          uuid: character-column-of-at-least-36-characters-with-lossless-canonical-uuid-round-trip
+          date: date
+          datetime: datetime-or-timestamp-with-explicit-adapter-owned-utc-binding
+          bytes: binary-or-blob
+        bit-as-bytes: reject-422-before-explain-or-select
+        temporal-source-ranges:
+          date: '1000-01-01 through 9999-12-31'
+          datetime: '1000-01-01 00:00:00.000000 through 9999-12-31 23:59:59.499999'
+          timestamp-utc: '1970-01-01 00:00:01.000000 through 2038-01-19 03:14:07.499999'
+          outside-source-range: reject-422-before-explain-or-select
+        temporal-placeholders:
+          date: adapter-owned-cast-as-date
+          datetime-or-timestamp: adapter-owned-cast-as-datetime-with-exact-source-fsp
+        operator-rules:
+          eq-ne-in-not-in: value-family-must-match-source-family
+          lt-lte-gt-gte: ordered-value-family-must-match-source-family
+          like: string-for-character-source-or-bytes-for-binary-source
+          is-null-is-not-null: no-value-type
+        set-predicate-values: homogeneous-single-compatible-discriminator
+        adapter-owned-explicit-binding-conversion: >-
+          Published typed representations may be parsed into an exact driver
+          value of the same portable type, including UTC temporal binding, but
+          JSON token families are never coerced and MySQL is not asked to
+          convert between numeric, textual, temporal, boolean, or binary
+          families.
+        incompatibility-result:
+          status: 422
+          code: UNSUPPORTED_QUERY
+          explain-or-select-executed: false
+      x-quordon-source-work-boundary:
+        transaction: read-only-repeatable-read
+        source-kind: configured-table-or-trusted-view
+        view-dependencies-and-schema-changes: trusted-administrator-responsibility
+        index-hints: none
+        optional-required-index: at-least-one-physical-read-node-uses-it-when-present
+        explain-mode: FORMAT-JSON-not-ANALYZE
+        plan-shape:
+          ordinary:
+            table-node-count: one-or-more-with-any-valid-alias
+            estimate-checks: every-read-node-including-materialized-results
+            required-index-check: physical-read-nodes-only-when-configured
+          safe-zero-table:
+            purpose: preserve-valid-empty-keyset-results
+            exact-root-members: [query_block]
+            exact-query-block-members: [select_id, message]
+            select-id: 1
+            allowed-messages:
+              - Impossible WHERE
+              - no matching row in const table
+            table-or-materialized-node-count: 0
+            estimated-source-rows: 0
+            required-index-check: vacuous-because-no-source-read-occurs
+            accepted-only-under-the-same-transaction-and-exact-statement: true
+          every-other-zero-table-or-malformed-plan: reject-422
+        plan-key: optional-policy-index-under-mysql-index-name-semantics
+        full-table-access-type: allowed-within-estimate-bound
+        temporary-table: optional-strict-boolean-default-false-materialization-requires-true
+        filesort: optional-strict-boolean-default-false
+        admission-metric: table.rows_examined_per_scan
+        metric-parsing: exact-overflow-safe-uint64
+        missing-malformed-ambiguous-or-overflowing-metric: reject-422
+        maximum-estimate: policy-owned-positive-uint64
+        plan-admission-rejection:
+          status: 422
+          code: UNSUPPORTED_QUERY
+          keyset-select-executed: false
+        estimate-is-heuristic-not-hard-runtime-bound: true
+        residual-risk: >-
+          Stale statistics and data changes can make actual reads exceed the
+          estimate. The bounded page, deadline, server timeout,
+          capacity gates, and operator-curated shape remain mandatory; the
+          operator explicitly accepts the residual source-work risk.
+      x-quordon-parameter-accounting:
+        filter-bind-count: every-filter-value
+        first-page-cursor-bind-count: 0
+        after-page-cursor-bind-count: >-
+          For N ordered key fields, the portable lexicographic OR ladder uses
+          exactly N*(N+1)/2 cursor bindings. One deterministic expansion is
+          used for all direction vectors so configuration feasibility,
+          authorization, audit correlation, and execution count the same
+          parameters.
+        implicit-limit-bind-count: 1
+        total-checked-against-effective-max-parameters-before-adapter-call: true
+        arithmetic: overflow-safe
+      x-quordon-pagination-semantics:
+        first-page: page.kind-equals-first-and-cursor-is-forbidden
+        subsequent-page: page.kind-equals-after-and-cursor-is-required
+        recommended-cursor-origin: echo-the-complete-next_cursor-returned-by-the-server
+        cursor-is-untrusted-request-input: true
+        cursor-signature-or-server-authentication: none
+        client-may-seek-with-any-schema-and-policy-valid-cursor: true
+        cursor-tampering: cannot-expand-the-authorized-shape-resources-or-fields
+        cursor-policy-generation: reauthorized-against-current-process-snapshot
+        ordering: strict-total-order-from-the-policy-owned-nonnull-unique-key
+        page-boundary: exclusive
+        database-fetch-limit: effective-request-limit-plus-one-overflow-safe
+        has-more: server-observed-at-least-one-additional-matching-row
+        next-cursor: key-values-of-the-last-returned-row
+        truncated-equals-has-more: true
+        returned-row-count: no-greater-than-effective-request-limit
+        cross-request-snapshot: none
+        concurrent-data-change-behavior: omissions-or-revisits-are-possible
+      x-quordon-continuation-request-budget:
+        purpose: every-emitted-next-cursor-can-be-resubmitted
+        effective-limit: minimum-of-hard-and-profile-max-request-bytes
+        validation-time: after-authorized-key-metadata-before-explain-or-select
+        canonical-next-request:
+          members: exact-authorized-keyset-request-with-page-kind-after
+          query-and-filter-values: exact-normalized-current-request-values
+          cursor: conservative-maximum-encoded-value-for-each-key-column
+          whitespace: none
+          json-member-order-and-escaping: one-deterministic-server-owned-canonical-form
+          guarantee: at-least-one-contract-valid-next-post-fits-the-effective-request-limit
+        size-calculation:
+          before-json-or-cursor-materialization: exact-or-conservative
+          string-json-escaping-expansion: included
+          binary-standard-base64-expansion-and-padding: included
+          object-array-member-and-discriminator-overhead: included
+          integer-arithmetic: overflow-safe
+        cannot-fit:
+          status: 413
+          code: REQUEST_TOO_LARGE
+          select-executed: false
+          completion-audit: mandatory-bounded
+          completion-error-kind: invalid
+      x-quordon-result-budget:
+        effective-limit: minimum-of-hard-and-profile-max-result-bytes
+        absolute-packet-limit: implementation-hard-limit-before-packet-allocation
+        fixed-envelope-and-column-metadata-preflight-before-query: conservative
+        rows: largest-complete-prefix
+        encoded-expansion-counted-before-string-base64-or-row-materialization: true
+        more-data-requires-cursor-to-fit-with-last-returned-row: true
+        first-row-and-required-next-cursor-cannot-fit:
+          status: 413
+          code: RESULT_TOO_LARGE
+          reason: no-forward-progress-is-possible
+        later-row-or-cursor-overflow:
+          status: 200
+          return: largest-complete-nonempty-prefix
+          truncated: true
+          has-more: true
+        stop-after-first-observed-omitted-row: true
+        unread-row-cleanup:
+          unbounded-driver-drain: forbidden
+          bounded-close-or-discard-connection: required
+          deadline: finite-and-independent-of-expired-request-context
+        transaction-finalization:
+          contextless-unbounded-commit-or-rollback: forbidden
+          deadline: finite-and-no-later-than-operation-cleanup-deadline
+        fixed-envelope-or-columns-cannot-fit:
+          status: 413
+          code: RESULT_TOO_LARGE
+          select-executed: false
+      x-quordon-audit:
+        mandatory: true
+        fail-closed: true
+        denial-and-completion-detached-from-client-cancellation: true
+        values-never-recorded:
+          - filter-values
+          - request-or-response-cursor-values
+          - row-values
+          - sql-or-bind-parameters
+        allow-and-completion-record:
+          - request-id
+          - principal-and-credential-identifier
+          - operation-and-public-shape-name
+          - policy-version-and-redacted-policy-hash
+          - query-shape-hash-without-values
+          - canonical-authorized-resource-and-field-set
+          - result-row-and-byte-count
+          - has-more-without-cursor-value
+          - duration-and-stable-outcome-or-error-kind
+        capacity-after-allow: bounded-completion-required
+        any-post-allow-pre-execution-failure: bounded-completion-required
+        pretoken-events:
+          denied-operation-or-shape:
+            authorized-resources-and-fields: omitted
+            cursor-filter-and-row-values: omitted
+          unassigned-profile-denial:
+            policy-profile: omitted
+            requested-profile: domain-separated-sha256-and-utf8-byte-length-only
+            raw-requested-profile-in-audit: forbidden
+          identifier-semantics-failure:
+            classified-completion-required: true
+            authorized-resources-and-fields: omitted-until-token-exists
+        startup-size-preflight:
+          identities: every-configured-principal-and-credential-identifier
+          shapes: every-reachable-keyset-shape
+          events:
+            - pretoken-denial
+            - unsupported-capability-completion
+            - identifier-semantics-failure-completion
+            - allow-decision
+            - capacity-failure-completion
+            - minimum-response-budget-failure-completion
+            - successful-or-failed-database-completion
+          exact-or-conservative-size-before-json-materialization: true
+          configured-keyset-events-validated-before-datasource-probes: true
+          event-above-hard-audit-bound: reject-process-startup
+      x-quordon-row-authorization-boundary:
+        row-level-security: absent
+        filter-placeholder-values: any-contract-valid-value-of-the-declared-type
+        cursor-values: may-seek-to-any-valid-position-in-the-authorized-order
+        policy-owned-constant-predicates: not-supported-in-this-design
+        operator-requirement: >-
+          Enable select_keyset only when the principal is authorized to read
+          every row reachable through every permitted filter value in the
+          shape. A filter template, page cursor, or required index is not a row
+          security boundary.
+      x-quordon-stable-error-mapping:
+        unsupported-http-method: [405, METHOD_NOT_ALLOWED]
+        malformed-transport-json-openapi-or-static-semantics: [400, INVALID_REQUEST]
+        missing-or-invalid-basic-credentials: [401, AUTHENTICATION_REQUIRED-or-INVALID_CREDENTIALS]
+        unassigned-profile-or-operation: [403, DENIED_OPERATION]
+        missing-or-mismatched-named-shape: [403, DENIED_QUERY_FEATURE]
+        denied-resource: [403, DENIED_RESOURCE]
+        denied-projection-filter-or-order-field: [403, DENIED_FIELD]
+        request-or-result-byte-overflow: [413, REQUEST_TOO_LARGE-or-RESULT_TOO_LARGE]
+        unsupported-media-type: [415, UNSUPPORTED_MEDIA_TYPE]
+        schema-index-type-or-plan-admission-rejection: [422, UNSUPPORTED_QUERY]
+        unsupported-adapter-capability: [501, CAPABILITY_NOT_IMPLEMENTED]
+        unexpected-database-operation-failure: [502, UPSTREAM_ERROR]
+        capacity-audit-service-or-database-unavailable: [503, CAPACITY_EXCEEDED-or-SERVICE_UNAVAILABLE-or-DATABASE_UNAVAILABLE]
+        database-deadline: [504, QUERY_TIMEOUT]
+        internal-invariant-failure: [500, INTERNAL_ERROR]
+      requestBody:
+        required: true
+        description: >-
+          Disjoint additive union: a legacy SELECT has no top-level kind, while
+          the keyset branch requires kind=keyset. Existing SELECT requests
+          remain valid and unchanged.
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SelectRequestVNext"
+            examples:
+              legacy:
+                value:
+                  profile: reader
+                  query:
+                    source: {schema: application, name: employees}
+                    projection:
+                      - {kind: field, field: id}
+                    limit: 100
+              firstPage:
+                value:
+                  kind: keyset
+                  profile: reader
+                  shape: employees_by_id
+                  query:
+                    source: {schema: application, name: employees}
+                    projection:
+                      - {kind: field, field: id}
+                      - {kind: field, field: status}
+                    filter:
+                      kind: predicate
+                      field: status
+                      operator: eq
+                      values:
+                        - {type: string, value: active}
+                    order_by:
+                      - {field: id, direction: asc}
+                    limit: 100
+                  page: {kind: first}
+              nextPage:
+                value:
+                  kind: keyset
+                  profile: reader
+                  shape: employees_by_id
+                  query:
+                    source: {schema: application, name: employees}
+                    projection:
+                      - {kind: field, field: id}
+                      - {kind: field, field: status}
+                    filter:
+                      kind: predicate
+                      field: status
+                      operator: eq
+                      values:
+                        - {type: string, value: active}
+                    order_by:
+                      - {field: id, direction: asc}
+                    limit: 100
+                  page:
+                    kind: after
+                    cursor:
+                      - {type: integer, value: "1500"}
+      responses:
+        "200":
+          description: >-
+            Existing bounded SELECT result or one complete bounded keyset page
+            with explicit continuation state. The branches are disjoint by the
+            required kind=keyset member, which legacy results forbid.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequiredRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SelectResultVNext"
+              example:
+                kind: keyset
+                query_id: q-0123456789abcdef
+                policy_profile: reader
+                policy_version: "4"
+                shape: employees_by_id
+                datasource: primary-mysql
+                adapter: mysql8
+                columns:
+                  - {name: id, type: integer, encoding: string, nullable: false}
+                  - {name: status, type: string, encoding: string, nullable: false}
+                rows:
+                  - ["1499", active]
+                  - ["1500", active]
+                row_count: 2
+                truncated: true
+                page:
+                  has_more: true
+                  next_cursor:
+                    - {type: integer, value: "1500"}
+                limits:
+                  deadline_ms: 3000
+                  max_request_bytes: 65536
+                  max_projection_fields: 50
+                  max_group_by_fields: 50
+                  max_order_by_fields: 8
+                  max_predicates: 50
+                  max_expression_depth: 8
+                  max_parameters: 100
+                  max_rows: 1000
+                  max_result_bytes: 1048576
+                  max_offset: 10000
+                  max_concurrency: 2
+                warnings: []
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/SelectMethodNotAllowed"
+        "413":
+          $ref: "#/components/responses/TooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+      description: HTTP Basic Auth on every application request.
+
+  headers:
+    RequiredRequestId:
+      description: Server-generated nonempty request correlation identifier.
+      required: true
+      schema:
+        type: string
+        minLength: 1
+
+    NoStore:
+      description: Sensitive query and discovery responses must not be stored.
+      required: true
+      schema:
+        type: string
+        const: no-store
+
+  responses:
+    InvalidRequest:
+      description: Strict transport, JSON, OpenAPI, or static semantic validation failed.
+      headers:
+        X-Request-ID: {$ref: "#/components/headers/RequiredRequestId"}
+        Cache-Control: {$ref: "#/components/headers/NoStore"}
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/InvalidRequestError"}
+
+    Unauthorized:
+      description: HTTP Basic credentials are absent or invalid.
+      headers:
+        X-Request-ID: {$ref: "#/components/headers/RequiredRequestId"}
+        Cache-Control: {$ref: "#/components/headers/NoStore"}
+        WWW-Authenticate:
+          required: true
+          schema: {type: string, minLength: 1}
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/UnauthorizedError"}
+
+    Forbidden:
+      description: Policy denied the operation, named shape, resource, field, or query feature.
+      headers:
+        X-Request-ID: {$ref: "#/components/headers/RequiredRequestId"}
+        Cache-Control: {$ref: "#/components/headers/NoStore"}
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/ForbiddenError"}
+
+    SelectMethodNotAllowed:
+      description: >-
+        The SELECT path exists but a method other than POST was used. HEAD has
+        the same 405 status and required headers, but Go net/http suppresses its
+        JSON body. The stable code is always repeated in a header.
+      headers:
+        X-Request-ID: {$ref: "#/components/headers/RequiredRequestId"}
+        Cache-Control: {$ref: "#/components/headers/NoStore"}
+        Allow:
+          required: true
+          schema:
+            type: string
+            const: POST
+        X-Quordon-Error-Code:
+          required: true
+          schema: {type: string, const: METHOD_NOT_ALLOWED}
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/MethodNotAllowedError"}
+
+    TooLarge:
+      description: >-
+        The request exceeds its body limit, or the fixed response/first
+        complete row and required cursor cannot fit so no forward progress is
+        possible. A progress-capable later-row overflow returns a truncated
+        200 prefix instead.
+      headers:
+        X-Request-ID: {$ref: "#/components/headers/RequiredRequestId"}
+        Cache-Control: {$ref: "#/components/headers/NoStore"}
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/TooLargeError"}
+
+    UnsupportedMediaType:
+      description: Content-Type is absent, malformed, or not application/json.
+      headers:
+        X-Request-ID: {$ref: "#/components/headers/RequiredRequestId"}
+        Cache-Control: {$ref: "#/components/headers/NoStore"}
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/UnsupportedMediaTypeError"}
+
+    Unprocessable:
+      description: Current source columns, cursor type, optional index constraint, or plan cannot execute the shape.
+      headers:
+        X-Request-ID: {$ref: "#/components/headers/RequiredRequestId"}
+        Cache-Control: {$ref: "#/components/headers/NoStore"}
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/UnprocessableError"}
+
+    InternalError:
+      description: An internal service failure occurred.
+      headers:
+        X-Request-ID: {$ref: "#/components/headers/RequiredRequestId"}
+        Cache-Control: {$ref: "#/components/headers/NoStore"}
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/InternalError"}
+
+    NotImplemented:
+      description: The selected adapter does not implement the required capability.
+      headers:
+        X-Request-ID: {$ref: "#/components/headers/RequiredRequestId"}
+        Cache-Control: {$ref: "#/components/headers/NoStore"}
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/NotImplementedError"}
+
+    UpstreamError:
+      description: MySQL failed the generated server-owned operation.
+      headers:
+        X-Request-ID: {$ref: "#/components/headers/RequiredRequestId"}
+        Cache-Control: {$ref: "#/components/headers/NoStore"}
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/UpstreamError"}
+
+    Unavailable:
+      description: Capacity or a required service/database/audit dependency is unavailable.
+      headers:
+        X-Request-ID: {$ref: "#/components/headers/RequiredRequestId"}
+        Cache-Control: {$ref: "#/components/headers/NoStore"}
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/UnavailableError"}
+
+    Timeout:
+      description: The database operation exceeded its effective deadline.
+      headers:
+        X-Request-ID: {$ref: "#/components/headers/RequiredRequestId"}
+        Cache-Control: {$ref: "#/components/headers/NoStore"}
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/TimeoutError"}
+
+  schemas:
+    SelectRequestVNext:
+      description: >-
+        Additive, disjoint request union for POST /queries/select. The legacy
+        branch forbids the top-level kind member; the keyset branch requires
+        kind=keyset.
+      oneOf:
+        - $ref: "./openapi.yaml#/components/schemas/SelectRequest"
+        - $ref: "#/components/schemas/KeysetSelectRequest"
+
+    KeysetSelectRequest:
+      description: Explicit keyset branch of POST /queries/select.
+      type: object
+      additionalProperties: false
+      required: [kind, profile, shape, query, page]
+      properties:
+        kind:
+          type: string
+          const: keyset
+        profile:
+          type: string
+          minLength: 1
+        shape:
+          $ref: "./openapi.yaml#/components/schemas/Identifier"
+        query:
+          $ref: "#/components/schemas/KeysetSelectQuery"
+        page:
+          $ref: "#/components/schemas/KeysetPageRequest"
+
+    KeysetSelectQuery:
+      description: >-
+        Complete executable query copied from one discovered named keyset
+        shape, with filter values filled and a limit chosen within its maximum.
+        offset is deliberately not a member of this closed schema.
+      type: object
+      additionalProperties: false
+      required: [source, projection, order_by, limit]
+      properties:
+        source:
+          $ref: "./openapi.yaml#/components/schemas/ResourceRef"
+        projection:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items:
+            $ref: "./openapi.yaml#/components/schemas/FieldSelection"
+        filter:
+          $ref: "./openapi.yaml#/components/schemas/FilterExpression"
+        order_by:
+          type: array
+          minItems: 1
+          maxItems: 8
+          uniqueItems: true
+          items:
+            $ref: "./openapi.yaml#/components/schemas/Sort"
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+      x-quordon-semantic-validation:
+        - Exact duplicate projection/filter terms and repeated exact order fields are rejected before identifier-semantics lookup.
+        - Recursively normalized duplicate filter expressions are rejected; distinct range predicates on one field remain valid.
+        - Datasource-canonicalized projection outputs, fields, and filter terms are unique.
+        - Source, projection, filter topology/types/arity, and order exactly match the named policy shape.
+        - Limit is no greater than the named shape maximum and the effective max_rows.
+        - Every ordered key field occurs exactly once as a projected source field.
+
+    KeysetPageRequest:
+      description: Closed first/subsequent-page union.
+      oneOf:
+        - $ref: "#/components/schemas/FirstPageRequest"
+        - $ref: "#/components/schemas/AfterPageRequest"
+      discriminator:
+        propertyName: kind
+        mapping:
+          first: "#/components/schemas/FirstPageRequest"
+          after: "#/components/schemas/AfterPageRequest"
+
+    FirstPageRequest:
+      description: Select the first page of the named shape without a cursor.
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          const: first
+
+    AfterPageRequest:
+      description: Continue strictly after one complete typed key tuple.
+      type: object
+      additionalProperties: false
+      required: [kind, cursor]
+      properties:
+        kind:
+          type: string
+          const: after
+        cursor:
+          $ref: "#/components/schemas/KeysetCursor"
+
+    KeysetCursor:
+      description: >-
+        Ordered tuple of exact server-issued key values. Values are strings by
+        contract even for integer and temporal keys; accepting a JSON number
+        or an alternate temporal representation would be type coercion and is
+        forbidden. SQL NULL is not a cursor value.
+      type: array
+      minItems: 1
+      maxItems: 8
+      items:
+        $ref: "#/components/schemas/KeysetCursorValue"
+
+    KeysetCursorValue:
+      description: Closed representation of one non-null supported key-column value.
+      oneOf:
+        - $ref: "#/components/schemas/IntegerCursorValue"
+        - $ref: "#/components/schemas/StringCursorValue"
+        - $ref: "#/components/schemas/BytesCursorValue"
+        - $ref: "#/components/schemas/DateCursorValue"
+        - $ref: "#/components/schemas/DateTimeCursorValue"
+        - $ref: "#/components/schemas/TimestampCursorValue"
+      discriminator:
+        propertyName: type
+        mapping:
+          integer: "#/components/schemas/IntegerCursorValue"
+          string: "#/components/schemas/StringCursorValue"
+          bytes: "#/components/schemas/BytesCursorValue"
+          date: "#/components/schemas/DateCursorValue"
+          datetime: "#/components/schemas/DateTimeCursorValue"
+          timestamp: "#/components/schemas/TimestampCursorValue"
+
+    IntegerCursorValue:
+      description: >-
+        Canonical base-10 signed or unsigned integral database value. Range is
+        first validated without datasource access against the universal
+        -9223372036854775808 through 18446744073709551615 envelope, then exactly
+        against source signedness and width without float64. The universal
+        range is semantic because JSON Schema cannot compare the numeric value
+        of this deliberately string-encoded exact representation.
+      type: object
+      additionalProperties: false
+      required: [type, value]
+      properties:
+        type: {type: string, const: integer}
+        value:
+          type: string
+          minLength: 1
+          maxLength: 20
+          pattern: '^(?:0|-[1-9][0-9]{0,18}|[1-9][0-9]{0,19})$'
+
+    StringCursorValue:
+      description: >-
+        Exact valid-UTF-8 character-key value composed only of Unicode scalar
+        values; empty is a valid database value. The strict raw-token scanner
+        rejects unpaired UTF-16 surrogate escapes before encoding/json can
+        replace them with U+FFFD. After authorization, the adapter verifies an
+        exact lossless round trip through the physical source charset and uses
+        the source column collation for comparison; unrepresentable values are
+        semantic 422 UNSUPPORTED_QUERY, not malformed JSON.
+      type: object
+      additionalProperties: false
+      required: [type, value]
+      properties:
+        type: {type: string, const: string}
+        value:
+          type: string
+          maxLength: 3072
+      x-quordon-semantic-validation:
+        - Unicode scalar count must fit the complete non-prefix key column; encoded input must fit the hard request limit.
+        - Physical source charset round-trip must preserve the exact value; failure is 422 after authorization and before the source query.
+        - Every decoded rune originates from a valid Unicode scalar value; decoder replacement of malformed escapes is forbidden.
+
+    BytesCursorValue:
+      description: Canonical standard-base64 representation of a binary-key value.
+      type: object
+      additionalProperties: false
+      required: [type, value]
+      properties:
+        type: {type: string, const: bytes}
+        value:
+          type: string
+          maxLength: 4096
+          contentEncoding: base64
+          pattern: '^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/][AQgw]==|[A-Za-z0-9+/]{2}[AEIMQUYcgkosw048]=)?$'
+
+    DateCursorValue:
+      description: >-
+        Canonical finite Gregorian date in the portable year 0001 through 9999
+        envelope. A concrete adapter may support a narrower physical range,
+        which it validates after reading authorized source metadata.
+      type: object
+      additionalProperties: false
+      required: [type, value]
+      properties:
+        type: {type: string, const: date}
+        value:
+          type: string
+          format: date
+          minLength: 10
+          maxLength: 10
+          pattern: '^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])$'
+      x-quordon-semantic-validation:
+        - The value is a real Gregorian calendar date with year 0001 through 9999.
+
+    DateTimeCursorValue:
+      description: >-
+        Canonical finite timezone-naive wall-clock value. It uses one ASCII
+        space between date and time and optionally one through nine fractional
+        second digits. It never denotes an instant or permits a timezone.
+      type: object
+      additionalProperties: false
+      required: [type, value]
+      properties:
+        type: {type: string, const: datetime}
+        value:
+          type: string
+          minLength: 19
+          maxLength: 29
+          pattern: '^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01]) (?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]{1,9})?$'
+      x-quordon-semantic-validation:
+        - The date portion is a real Gregorian calendar date with year 0001 through 9999.
+
+    TimestampCursorValue:
+      description: >-
+        Canonical finite UTC instant using uppercase T and the exact uppercase Z
+        suffix. Numeric offsets, lowercase t/z, local time, leap seconds, and
+        infinity spellings are forbidden. Fractional seconds have one through
+        nine digits when present.
+      type: object
+      additionalProperties: false
+      required: [type, value]
+      properties:
+        type: {type: string, const: timestamp}
+        value:
+          type: string
+          format: date-time
+          minLength: 20
+          maxLength: 30
+          pattern: '^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]{1,9})?Z$'
+      x-quordon-semantic-validation:
+        - The value is a real Gregorian UTC instant with year 0001 through 9999.
+
+    KeysetSelectResult:
+      description: Closed final/more result union with internally consistent continuation state.
+      oneOf:
+        - $ref: "#/components/schemas/FinalKeysetSelectResult"
+        - $ref: "#/components/schemas/MoreKeysetSelectResult"
+
+    SelectResultVNext:
+      description: >-
+        Additive, disjoint success-response union for POST /queries/select.
+        The legacy branch forbids kind; every keyset result requires
+        kind=keyset.
+      oneOf:
+        - $ref: "./openapi.yaml#/components/schemas/SelectResult"
+        - $ref: "#/components/schemas/KeysetSelectResult"
+
+    KeysetSelectResultBase:
+      description: Common fields shared by final and continuation keyset responses.
+      type: object
+      required:
+        - kind
+        - query_id
+        - policy_profile
+        - policy_version
+        - shape
+        - datasource
+        - adapter
+        - columns
+        - rows
+        - row_count
+        - truncated
+        - page
+        - limits
+        - warnings
+      properties:
+        kind: {type: string, const: keyset}
+        query_id: {type: string, minLength: 1}
+        policy_profile: {type: string, minLength: 1}
+        policy_version: {type: string, minLength: 1}
+        shape:
+          $ref: "./openapi.yaml#/components/schemas/Identifier"
+        datasource: {type: string, minLength: 1}
+        adapter:
+          type: string
+          minLength: 1
+        columns:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/KeysetResultColumn"
+        rows:
+          type: array
+          maxItems: 1000000
+          items:
+            type: array
+            minItems: 1
+            maxItems: 100
+            items:
+              type: [string, "null"]
+        row_count:
+          type: integer
+          minimum: 0
+          maximum: 1000000
+        truncated: {type: boolean}
+        page:
+          oneOf:
+            - $ref: "#/components/schemas/FinalPageResult"
+            - $ref: "#/components/schemas/MorePageResult"
+        limits:
+          $ref: "./openapi.yaml#/components/schemas/Limits"
+        warnings:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            maxLength: 512
+            pattern: '^[^\x00-\x1F\x7F-\x9F]*$'
+      x-quordon-semantic-validation:
+        - Column names are datasource-canonicalized unique projection outputs in request order.
+        - Every row length equals columns length and row_count equals rows length.
+        - A row cell is null only when its corresponding column has nullable true.
+        - Every non-null row cell satisfies the exact portable lexical form of its positional column metadata; its concrete physical source range is adapter-owned and checked before encoding.
+        - Cursor values exactly encode the ordered key fields of the last returned row; a timestamp cursor is the normalized UTC form of its datetime result cell.
+        - Response encoded bytes do not exceed effective max_result_bytes.
+      x-quordon-row-cell-validation:
+        json-schema-limitation: >-
+          JSON Schema cannot correlate an item at rows[r][c] with columns[c].
+          Contract validation therefore requires semantic fixtures against the real
+          handler and closed encoder in addition to OpenAPI response fixtures.
+        validation-order: before-response-materialization-completion-audit-and-http-write
+        null-cell: allowed-only-when-the-positional-column-nullable-is-true
+        string-encoded-portable-types:
+          integer: canonical-base10-without-plus-leading-zero-or-negative-zero-and-within-exact-source-signedness-width
+          decimal: canonical-finite-fixed-point-without-exponent-and-within-exact-source-precision-and-scale
+          string: exact-valid-utf8-without-decoder-replacement
+          date: canonical-valid-gregorian-yyyy-mm-dd-in-the-portable-0001-01-01-through-9999-12-31-range
+          datetime: canonical-valid-yyyy-mm-dd-space-hh-mm-ss-with-optional-1-through-9-digit-fraction-in-the-portable-0001-through-9999-year-range
+          time: canonical-bounded-time-with-optional-minus-hours-00-through-838-minutes-and-seconds-00-through-59-and-optional-1-through-9-digit-fraction
+          time-leading-plus: forbidden
+          json: valid-utf8-containing-exactly-one-complete-json-value-without-trailing-data
+        base64-encoded-portable-types:
+          bytes: strict-canonical-standard-base64-that-round-trips-to-the-exact-source-bytes
+        cross-type-acceptance: forbidden
+        float64-conversion-for-integer-or-decimal: forbidden
+        float-double-or-real-source-column: rejected-422-before-select-and-never-encoded-as-decimal
+        temporal-session-semantics:
+          portable-timestamp-cursor: uppercase-rfc3339-utc-t-and-z-with-zero-through-nine-fraction-digits
+          projected-timestamp-cell: portable-datetime-text-preserving-the-existing-row-contract
+          timestamp-cursor-to-row-comparison: semantic-utc-normalization-without-timezone-coercion
+          concrete-source-range-precision-session-zone-and-driver-binding: adapter-owned
+          mysql8-timestamp: read-and-bound-under-a-verified-utc-session-time-zone
+          mysql8-timestamp-result-range: 1970-01-01-00-00-01-through-2038-01-19-03-14-07-499999
+          datetime: timezone-naive-source-wall-clock-is-preserved
+          session-time-zone-restoration: bounded-verified-or-connection-discarded
+        source-value-cannot-be-losslessly-represented:
+          status: 502
+          code: UPSTREAM_ERROR
+          partial-success-response: forbidden
+          completion-error-kind: upstream
+        intentional-early-prefix-stop:
+          unread-row-drain: forbidden
+          cleanup: immediately-close-and-discard-physical-connection
+          transaction-cleanup: by-physical-connection-close
+          deadline: bounded
+        closed-encoder-produces-contract-invalid-cell:
+          status: 500
+          code: INTERNAL_ERROR
+          partial-success-response: forbidden
+          completion-error-kind: internal
+
+    KeysetResultColumn:
+      description: Closed portable result-column metadata with type-bound encoding.
+      oneOf:
+        - $ref: "#/components/schemas/StringEncodedResultColumn"
+        - $ref: "#/components/schemas/Base64EncodedResultColumn"
+
+    StringEncodedResultColumn:
+      description: Metadata for an exact textual representation of a non-binary value.
+      type: object
+      additionalProperties: false
+      required: [name, type, encoding, nullable]
+      properties:
+        name:
+          $ref: "./openapi.yaml#/components/schemas/Identifier"
+        type:
+          type: string
+          enum: [integer, decimal, string, date, datetime, time, json]
+        encoding: {type: string, const: string}
+        nullable: {type: boolean}
+
+    Base64EncodedResultColumn:
+      description: Metadata for base64-encoded binary or spatial bytes.
+      type: object
+      additionalProperties: false
+      required: [name, type, encoding, nullable]
+      properties:
+        name:
+          $ref: "./openapi.yaml#/components/schemas/Identifier"
+        type: {type: string, const: bytes}
+        encoding: {type: string, const: base64}
+        nullable: {type: boolean}
+
+    FinalKeysetSelectResult:
+      description: Final page for which the server observed no additional matching row.
+      allOf:
+        - $ref: "#/components/schemas/KeysetSelectResultBase"
+        - type: object
+          properties:
+            truncated: {type: boolean, const: false}
+            page: {$ref: "#/components/schemas/FinalPageResult"}
+      unevaluatedProperties: false
+
+    MoreKeysetSelectResult:
+      description: Nonempty page with a cursor because another matching row was observed.
+      allOf:
+        - $ref: "#/components/schemas/KeysetSelectResultBase"
+        - type: object
+          properties:
+            rows:
+              type: array
+              minItems: 1
+            truncated: {type: boolean, const: true}
+            page: {$ref: "#/components/schemas/MorePageResult"}
+      unevaluatedProperties: false
+
+    FinalPageResult:
+      description: Closed continuation state for an exhausted traversal.
+      type: object
+      additionalProperties: false
+      required: [has_more]
+      properties:
+        has_more: {type: boolean, const: false}
+
+    MorePageResult:
+      description: Closed continuation state containing the next typed key tuple.
+      type: object
+      additionalProperties: false
+      required: [has_more, next_cursor]
+      properties:
+        has_more: {type: boolean, const: true}
+        next_cursor:
+          $ref: "#/components/schemas/KeysetCursor"
+
+    ErrorEnvelopeBase:
+      description: Sanitized common application error fields.
+      type: object
+      required: [code, message, request_id]
+      properties:
+        code: {type: string}
+        message: {type: string, minLength: 1}
+        request_id: {type: string, minLength: 1}
+        policy_version: {type: string, minLength: 1}
+
+    InvalidRequestError:
+      description: Strict request validation failure.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          properties:
+            code: {type: string, const: INVALID_REQUEST}
+      unevaluatedProperties: false
+
+    UnauthorizedError:
+      description: Missing or invalid Basic credentials.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          properties:
+            code:
+              type: string
+              enum: [AUTHENTICATION_REQUIRED, INVALID_CREDENTIALS]
+      unevaluatedProperties: false
+
+    ForbiddenError:
+      description: Uniform policy denial without execution details.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          required: [policy_version]
+          properties:
+            code:
+              type: string
+              enum: [DENIED_OPERATION, DENIED_RESOURCE, DENIED_FIELD, DENIED_QUERY_FEATURE]
+      unevaluatedProperties: false
+
+    MethodNotAllowedError:
+      description: Existing path addressed with an unsupported method.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          properties:
+            code: {type: string, const: METHOD_NOT_ALLOWED}
+      unevaluatedProperties: false
+
+    TooLargeError:
+      description: Request or result exceeds a documented hard or effective byte bound.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          properties:
+            code:
+              type: string
+              enum: [REQUEST_TOO_LARGE, RESULT_TOO_LARGE]
+      unevaluatedProperties: false
+
+    UnsupportedMediaTypeError:
+      description: Request body media type is not supported.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          properties:
+            code: {type: string, const: UNSUPPORTED_MEDIA_TYPE}
+      unevaluatedProperties: false
+
+    UnprocessableError:
+      description: Current DBMS schema, index, type, or plan cannot execute the shape.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          required: [policy_version]
+          properties:
+            code: {type: string, const: UNSUPPORTED_QUERY}
+      unevaluatedProperties: false
+
+    InternalError:
+      description: Sanitized internal service failure.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          properties:
+            code: {type: string, const: INTERNAL_ERROR}
+      unevaluatedProperties: false
+
+    NotImplementedError:
+      description: Selected adapter lacks the required operation capability.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          required: [policy_version]
+          properties:
+            code: {type: string, const: CAPABILITY_NOT_IMPLEMENTED}
+      unevaluatedProperties: false
+
+    UpstreamError:
+      description: Sanitized unexpected DBMS operation failure.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          required: [policy_version]
+          properties:
+            code: {type: string, const: UPSTREAM_ERROR}
+      unevaluatedProperties: false
+
+    UnavailableError:
+      description: Capacity or a required service/database dependency is unavailable.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          properties:
+            code:
+              type: string
+              enum: [CAPACITY_EXCEEDED, SERVICE_UNAVAILABLE, DATABASE_UNAVAILABLE]
+      unevaluatedProperties: false
+
+    TimeoutError:
+      description: DBMS operation exceeded its effective deadline.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          required: [policy_version]
+          properties:
+            code: {type: string, const: QUERY_TIMEOUT}
+      unevaluatedProperties: false

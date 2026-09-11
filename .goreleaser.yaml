@@ -1,0 +1,193 @@
+version: 2
+
+project_name: quordon
+
+builds:
+  - id: quordon
+    main: ./cmd/quordon
+    binary: quordon
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: quordon
+    ids:
+      - quordon
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    wrap_in_directory: true
+    builds_info:
+      owner: root
+      group: root
+      mode: 0755
+    files:
+      - src: LICENSE
+        info:
+          owner: root
+          group: root
+      - src: README.md
+        info:
+          owner: root
+          group: root
+      - src: config/policy.example.yaml
+        dst: config/policy.example.yaml
+        info:
+          owner: root
+          group: root
+      - src: packaging/systemd/quordon.service
+        dst: packaging/systemd/quordon.service
+        info:
+          owner: root
+          group: root
+      - src: packaging/man/quordon.1
+        dst: packaging/man/quordon.1
+        info:
+          owner: root
+          group: root
+      - src: third_party/go-sql-driver/mysql/LICENSE
+        dst: licenses/go-sql-driver-mysql-MPL-2.0.txt
+        info:
+          owner: root
+          group: root
+      - src: third_party/go-sql-driver/mysql/QUORDON_PATCH.md
+        dst: third-party/go-sql-driver-mysql.md
+        info:
+          owner: root
+          group: root
+      - src: third_party/NOTICE.md
+        dst: third-party/NOTICE.md
+        info:
+          owner: root
+          group: root
+      - src: third_party/licenses/filippo.io-edwards25519-BSD-3-Clause.txt
+        dst: licenses/filippo.io-edwards25519-BSD-3-Clause.txt
+        info:
+          owner: root
+          group: root
+      - src: third_party/licenses/go-standard-library-BSD-3-Clause.txt
+        dst: licenses/go-standard-library-BSD-3-Clause.txt
+        info:
+          owner: root
+          group: root
+      - src: third_party/licenses/golang.org-x-crypto-BSD-3-Clause.txt
+        dst: licenses/golang.org-x-crypto-BSD-3-Clause.txt
+        info:
+          owner: root
+          group: root
+      - src: third_party/licenses/gopkg.in-yaml.v3-MIT-and-Apache-2.0.txt
+        dst: licenses/gopkg.in-yaml.v3-MIT-and-Apache-2.0.txt
+        info:
+          owner: root
+          group: root
+
+nfpms:
+  - id: quordon
+    ids:
+      - quordon
+    package_name: quordon
+    file_name_template: "{{ .ConventionalFileName }}"
+    vendor: Quordon contributors
+    homepage: https://github.com/sigalx/quordon
+    maintainer: Andrey Shcheglov <sigalx@sigalx.ru>
+    description: |-
+      Policy-enforcing gateway for strictly validated infrastructure access
+      Quordon gives local software agents a typed, policy-authorized HTTP API
+      for read-only operations on databases containing sensitive data.
+      .
+      The current release provides a MySQL 8 adapter, strict request and
+      response validation, mandatory audit events, and bounded query execution.
+    license: Apache-2.0
+    formats:
+      - deb
+    bindir: /usr/bin
+    section: database
+    priority: optional
+    dependencies:
+      - adduser
+      - ca-certificates
+      - init-system-helpers (>= 1.50)
+    contents:
+      - src: config/policy.example.yaml
+        dst: /usr/share/doc/quordon/examples/policy.yaml
+        file_info:
+          mode: 0644
+      - src: packaging/systemd/quordon.service
+        dst: /usr/lib/systemd/system/quordon.service
+        file_info:
+          mode: 0644
+      - src: packaging/man/quordon.1.gz
+        dst: /usr/share/man/man1/quordon.1.gz
+        file_info:
+          mode: 0644
+      - src: packaging/debian/copyright
+        dst: /usr/share/doc/quordon/copyright
+        file_info:
+          mode: 0644
+      - src: third_party/go-sql-driver/mysql/QUORDON_PATCH.md
+        dst: /usr/share/doc/quordon/third-party/go-sql-driver-mysql.md
+        file_info:
+          mode: 0644
+      - src: third_party/NOTICE.md
+        dst: /usr/share/doc/quordon/third-party/NOTICE.md
+        file_info:
+          mode: 0644
+      - src: third_party/go-sql-driver/mysql/LICENSE
+        dst: /usr/share/doc/quordon/third-party/licenses/go-sql-driver-mysql-MPL-2.0.txt
+        file_info:
+          mode: 0644
+      - src: third_party/licenses/filippo.io-edwards25519-BSD-3-Clause.txt
+        dst: /usr/share/doc/quordon/third-party/licenses/filippo.io-edwards25519-BSD-3-Clause.txt
+        file_info:
+          mode: 0644
+      - src: third_party/licenses/go-standard-library-BSD-3-Clause.txt
+        dst: /usr/share/doc/quordon/third-party/licenses/go-standard-library-BSD-3-Clause.txt
+        file_info:
+          mode: 0644
+      - src: third_party/licenses/golang.org-x-crypto-BSD-3-Clause.txt
+        dst: /usr/share/doc/quordon/third-party/licenses/golang.org-x-crypto-BSD-3-Clause.txt
+        file_info:
+          mode: 0644
+      - src: third_party/licenses/gopkg.in-yaml.v3-MIT-and-Apache-2.0.txt
+        dst: /usr/share/doc/quordon/third-party/licenses/gopkg.in-yaml.v3-MIT-and-Apache-2.0.txt
+        file_info:
+          mode: 0644
+    scripts:
+      postinstall: packaging/scripts/postinstall.sh
+      preremove: packaging/scripts/preremove.sh
+      postremove: packaging/scripts/postremove.sh
+    deb:
+      lintian_overrides:
+        - statically-linked-binary
+        - no-changelog
+        # Rollback of an aborted removal must also restore a service that was
+        # manually active while disabled; deb-systemd-invoke intentionally
+        # refuses that case, so postinst uses a guarded direct systemctl start.
+        - maintainer-script-calls-systemctl
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+release:
+  draft: true
+  replace_existing_draft: true
+  replace_existing_artifacts: true
+  prerelease: auto

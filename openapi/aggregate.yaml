@@ -1,0 +1,1079 @@
+---
+openapi: 3.1.0
+info:
+  title: Quordon Aggregate API Module
+  version: 1.2.1
+  description: >-
+    Executable contract module for POST /queries/aggregate. The root service
+    contract in openapi.yaml references this path and its schemas. This module
+    is versioned, validated, and promoted atomically with the runtime.
+
+x-quordon-status: runtime
+x-quordon-runtime-contract: true
+
+security:
+  - basicAuth: []
+
+servers:
+  - url: /
+    description: Current Quordon process; no version prefix is used internally.
+
+tags:
+  - name: Discovery
+    description: Principal-scoped service capabilities.
+  - name: Queries
+    description: Policy-authorized structured query operations.
+
+paths:
+  /capabilities:
+    get:
+      operationId: getCapabilities
+      summary: Get effective capabilities
+      description: >-
+        Returns only profiles assigned to the authenticated principal. The
+        closed operation set includes aggregate and the core-owned
+        list_query_shapes discovery capability. aggregate appears only when
+        both the selected adapter and profile enable it; list_query_shapes also
+        requires a successfully published disclosure-safe startup snapshot.
+      x-quordon-status: runtime
+      tags: [Discovery]
+      responses:
+        "200":
+          description: Capabilities visible to the authenticated principal.
+          headers:
+            X-Request-ID:
+              $ref: "./openapi.yaml#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Capabilities"
+              example:
+                api_version: "1"
+                service_version: 0.2.0
+                policy_version: "2"
+                profiles:
+                  - name: analytics
+                    datasource: primary-mysql
+                    adapter: mysql8
+                    operations: [explain_select, aggregate, list_query_shapes]
+                    limits:
+                      deadline_ms: 3000
+                      max_request_bytes: 65536
+                      max_projection_fields: 50
+                      max_group_by_fields: 20
+                      max_order_by_fields: 20
+                      max_predicates: 50
+                      max_expression_depth: 8
+                      max_parameters: 100
+                      max_rows: 1000
+                      max_result_bytes: 1048576
+                      max_offset: 0
+                      max_concurrency: 2
+        "401":
+          $ref: "./openapi.yaml#/components/responses/Unauthorized"
+        "503":
+          $ref: "./openapi.yaml#/components/responses/Unavailable"
+
+  /queries/aggregate:
+    post:
+      operationId: executeAggregate
+      summary: Execute a bounded aggregate query
+      description: >-
+        Executes a policy-authorized aggregate over one configured table or trusted view.
+        The request never contains SQL, expressions, arbitrary functions,
+        joins, HAVING, window functions, subqueries, OFFSET, or client-selected
+        execution settings. Scalar mode returns exactly one row. Grouped mode
+        returns a bounded prefix and may set truncated to true. Aggregate is a
+        separate capability and policy operation for feature negotiation and
+        operational limits, but it is not a weaker confidentiality boundary
+        than raw-row SELECT: unique dimensions and differencing filters can
+        reconstruct row values. An aggregate profile may cover only rows and
+        fields that the principal is allowed to read individually. A future
+        aggregate-only disclosure control requires a separate threat model and
+        anti-differencing design and is outside this runtime contract. On one
+        physical connection the adapter validates object coordinates and every
+        referenced field, explicitly selects REPEATABLE READ, starts a read-only
+        consistent-snapshot transaction, performs the authorized plan preflight,
+        executes the aggregate and finalizes the transaction with bounded cleanup.
+        View definitions, aliases and concurrent schema changes are trusted
+        administrator responsibilities; dependency analysis is not performed.
+        MySQL requires SHOW VIEW for view plan preflight. With SELECT-only
+        datasource credentials, an authorized view returns 503 DATABASE_UNAVAILABLE
+        before the main SELECT; plan preflight is never skipped.
+        Values are always bound parameters. LIMIT bounds
+        returned groups, not scanned source rows. The first MVP runtime admits
+        only operator-curated aggregate shapes and rejects a preflight
+        plan that exceeds the shape's policy-owned estimate. MySQL EXPLAIN
+        estimates are heuristic, not a hard bound on rows actually examined;
+        stale statistics, data skew, and a wide index range can under-estimate
+        work. The operator explicitly accepts that residual risk when enabling a
+        shape. Deadline, server-side timeout, concurrency limits and
+        least-privilege database grants remain mandatory; output limits and plan
+        estimates never substitute for a DBMS-enforced source-row bound.
+      x-quordon-status: runtime
+      x-quordon-capability: aggregate
+      x-quordon-confidentiality-scope: select
+      x-quordon-execution-invariants:
+        connection: one-physical-connection
+        ordered-steps:
+          - validate-mysql8-and-identifier-semantics-without-resolving-client-resource
+          - validate-requested-object-coordinates-referenced-fields-and-types
+          - for-time-buckets-capture-set-and-verify-the-same-connections-session-time-zone-as-plus-00-00
+          - set-transaction-isolation-repeatable-read
+          - start-read-only-consistent-snapshot-transaction
+          - compile-select-without-index-hints
+          - explain-and-apply-policy-owned-heuristic-admission-checks
+          - execute-the-same-preflighted-select-with-bound-values
+          - finalize-transaction-with-bounded-cleanup
+          - restore-and-verify-the-captured-session-time-zone-or-discard-the-physical-connection
+        transaction-isolation: REPEATABLE READ
+      x-quordon-source-work-controls:
+        strategy: policy-curated-bounded-shapes
+        classification: heuristic-admission-control
+        hard-source-row-bound: false
+        request-must-match-one-authorized-shape: true
+        shape-binds:
+          - datasource-schema-object
+          - mode
+          - ordered-projection-with-dimensions-measures-fields-functions-and-aliases
+          - complete-normalized-filter-tree
+          - ordered-sort-targets-and-directions
+          - requested-limit-within-shape-maximum
+          - optional-required-index
+          - maximum-rows-examined-per-scan
+          - allow-temporary-table-and-allow-filesort
+        normalized-query-shape:
+          identifiers: canonicalized-with-datasource-semantics
+          projection:
+            order-significant: true
+            bind: [kind, field, function, unit, timezone, alias]
+          filter:
+            bind-entire-recursive-tree: true
+            bind-absence-vs-presence: true
+            bind-group-operators: true
+            bind-predicate-multiplicity: true
+            bind-per-predicate: [field, operator, placeholder-types, placeholder-arity]
+            and-or-children-canonicalization: sort-by-canonical-child-representation
+            duplicate-normalized-children: reject
+            parameter-values-in-shape: false
+            policy-value-constraints: not-supported-in-this-mvp
+          order-by:
+            order-significant: true
+            bind-absence-vs-presence: true
+            bind: [kind, target, direction]
+          limit:
+            bind-requested-value: true
+            must-not-exceed-shape-maximum: true
+          matching: exact-after-normalization-and-policy-constraints
+          partial-or-field-only-match: forbidden
+          authorization-token-binds-normalized-shape: true
+        same-connection-plan-preflight: EXPLAIN FORMAT=JSON
+        required-index-binding:
+          origin: matched-policy-shape
+          optional: true
+          omission: no-index-constraint
+          explicit-null-empty-or-nonstring: reject-startup
+          client-selectable: false
+          sql-index-hint: none
+          metadata-index-lookup: none
+          same-compiled-select-used-for-preflight-and-execution: true
+          only-preflight-prefix-differs: EXPLAIN FORMAT=JSON
+          plan-verification:
+            physical-read-nodes-only: true
+            at-least-one-node-uses-configured-index-when-present: true
+            derived-result-index-cannot-satisfy-constraint: true
+        reject-plan-conditions:
+          - configured-index-not-used-by-any-physical-read-node
+          - rows-examined-per-scan-above-policy-bound
+          - missing-malformed-ambiguous-or-overflowing-rows-examined-metric
+          - unapproved-temporary-table
+          - unapproved-filesort
+        rows-examined-admission-metric:
+          plan-format: mysql8-explain-json
+          traversal: recursively-visit-all-json-objects-and-arrays
+          source-node-identification:
+            candidate: object-value-of-a-property-named-table
+            minimum-required-node-count: 1
+            additional-table-or-materialized-nodes: bounded-and-work-controlled
+            table_name: any-valid-source-alias
+          json-field: rows_examined_per_scan
+          explicitly-not-used: [rows_produced_per_join, query_cost, filtered]
+          accepted-json-token: "JSON number matching 0|[1-9][0-9]*"
+          policy-maximum:
+            name: maximum_rows_examined_per_scan
+            accepted-config-token: plain-unquoted-positive-base10-yaml-integer
+            minimum: 1
+            maximum: 18446744073709551615
+            invalid-or-overflowing-config: reject-startup
+          arithmetic:
+            representation: unsigned-64-bit
+            parse-before-native-conversion: true
+            overflow: reject
+            aggregation: none-check-every-read-node-independently
+          comparison: reject-when-metric-greater-than-policy-maximum
+          missing-null-fractional-negative-string-or-malformed: reject
+          malformed-read-nodes: reject
+          rejection-status: 422
+          rejection-code: UNSUPPORTED_QUERY
+        client-may-override-shape-or-bounds: false
+        count-distinct-requires-explicit-shape: true
+        known-limitations:
+          - mysql-estimates-may-be-stale-or-inaccurate
+          - required-index-does-not-bound-the-index-range
+          - accepted-shape-may-run-until-server-side-timeout
+        residual-risk-accepted-by: operator-enabling-the-shape
+        admission-errors:
+          no-authorized-shape:
+            status: 403
+            code: DENIED_QUERY_FEATURE
+            dbms-preflight-or-aggregate-call: false
+            audit-event: query_decision
+            audit-decision: deny
+            audit-reason-code: DENIED_QUERY_FEATURE
+          authorized-shape-plan-rejected:
+            status: 422
+            code: UNSUPPORTED_QUERY
+            aggregate-executed: false
+            audit-event: query_completion
+            audit-outcome: error
+            audit-error-kind: invalid
+          preflight-dbms-failure:
+            classification: existing-timeout-unavailable-upstream-mapping
+      x-quordon-time-bucket-utc:
+        cached-adapter-feature: time_bucket_utc
+        unsupported-feature:
+          status-code: 501-CAPABILITY_NOT_IMPLEMENTED
+          datasource-call: false
+          configuration-error: false
+          readiness-failure-by-itself: false
+        compatible-source-types: [TIMESTAMP, DATETIME]
+        datetime-semantics: timezone-naive-wall-clock-declared-by-policy-as-utc
+        units: [hour, day, week, month]
+        interval-start: inclusive
+        week-start: monday-00-00-00-utc
+        client-expression-or-format-fragments: forbidden
+        compiler:
+          projection-grouping-and-ordering-use-the-same-server-owned-expression: true
+          order-alias-is-never-used-as-sql: true
+          timezone: exact-UTC
+        session-time-zone:
+          set-before-transaction: "+00:00"
+          verify-before-explain: true
+          restore-and-verify-after-transaction: true
+          restoration-uses-server-side-bind: true
+          restoration-failure: discard-connection-and-fail-operation
+          cleanup-deadline: finite
+        invalid-physical-temporal-values:
+          hidden-server-owned-nullness-mismatch-aggregate: required
+          nonzero-or-malformed-hidden-token: 502-UPSTREAM_ERROR
+          noncanonical-generated-value: 502-UPSTREAM_ERROR
+          partial-response: forbidden
+        result:
+          type: datetime
+          encoding: string
+          non-null-format: "YYYY-MM-DDTHH:00:00Z"
+          nullable-copied-from-source-column: true
+        plan-work-controls:
+          time-bucket-policy-requires-both-booleans: [allow_temporary_table, allow_filesort]
+          controls-client-visible: false
+          malformed-json-plan-flags: 422-UNSUPPORTED_QUERY
+      tags: [Queries]
+      requestBody:
+        required: true
+        description: A profile name and a strictly typed aggregate query.
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AggregateRequest"
+            examples:
+              scalar:
+                summary: Count matching rows and find the latest timestamp
+                value:
+                  profile: analytics
+                  query:
+                    mode: scalar
+                    source:
+                      schema: application
+                      name: employees
+                    projection:
+                      - kind: measure
+                        function: count_all
+                        alias: employees_count
+                      - kind: measure
+                        function: max
+                        field: created_at
+                        alias: latest_created_at
+                    filter:
+                      kind: predicate
+                      field: deleted_at
+                      operator: is_null
+                      values: []
+              grouped:
+                summary: Count active employees by status
+                value:
+                  profile: analytics
+                  query:
+                    mode: grouped
+                    source:
+                      schema: application
+                      name: employees
+                    projection:
+                      - kind: dimension
+                        field: status
+                      - kind: measure
+                        function: count_all
+                        alias: employees_count
+                    filter:
+                      kind: predicate
+                      field: deleted_at
+                      operator: is_null
+                      values: []
+                    order_by:
+                      - kind: measure
+                        alias: employees_count
+                        direction: desc
+                    limit: 20
+      responses:
+        "200":
+          description: Bounded aggregate rows with portable column metadata.
+          headers:
+            X-Request-ID:
+              $ref: "./openapi.yaml#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AggregateResult"
+              examples:
+                grouped:
+                  summary: Grouped count result
+                  value:
+                    mode: grouped
+                    query_id: q-aggregate-example
+                    policy_profile: analytics
+                    policy_version: "1"
+                    datasource: primary-mysql
+                    adapter: mysql8
+                    columns:
+                      - name: status
+                        type: string
+                        encoding: string
+                        nullable: false
+                      - name: employees_count
+                        type: integer
+                        encoding: string
+                        nullable: false
+                    rows:
+                      - [active, "1250"]
+                      - [dismissed, "340"]
+                    row_count: 2
+                    truncated: false
+                    limits:
+                      deadline_ms: 3000
+                      max_request_bytes: 65536
+                      max_projection_fields: 50
+                      max_group_by_fields: 20
+                      max_order_by_fields: 20
+                      max_predicates: 50
+                      max_expression_depth: 8
+                      max_parameters: 100
+                      max_rows: 1000
+                      max_result_bytes: 1048576
+                      max_offset: 0
+                      max_concurrency: 2
+                    warnings: []
+        "400":
+          $ref: "./openapi.yaml#/components/responses/BadRequest"
+        "401":
+          $ref: "./openapi.yaml#/components/responses/Unauthorized"
+        "403":
+          $ref: "./openapi.yaml#/components/responses/Forbidden"
+        "413":
+          $ref: "./openapi.yaml#/components/responses/TooLarge"
+        "415":
+          $ref: "./openapi.yaml#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "./openapi.yaml#/components/responses/Unprocessable"
+        "500":
+          $ref: "./openapi.yaml#/components/responses/InternalError"
+        "501":
+          $ref: "./openapi.yaml#/components/responses/NotImplemented"
+        "502":
+          $ref: "./openapi.yaml#/components/responses/UpstreamError"
+        "503":
+          $ref: "./openapi.yaml#/components/responses/Unavailable"
+        "504":
+          $ref: "./openapi.yaml#/components/responses/Timeout"
+
+components:
+  securitySchemes:
+    basicAuth:
+      $ref: "./openapi.yaml#/components/securitySchemes/basicAuth"
+
+  schemas:
+    Capabilities:
+      description: >-
+        Effective capabilities for the authenticated principal. Profiles
+        and operations not assigned to the principal are not disclosed.
+      type: object
+      additionalProperties: false
+      required: [api_version, service_version, policy_version, profiles]
+      properties:
+        api_version:
+          type: string
+          const: "1"
+        service_version:
+          type: string
+        policy_version:
+          type: string
+        profiles:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProfileCapability"
+
+    ProfileCapability:
+      description: >-
+        An assigned profile intersected with adapter capabilities. aggregate is
+        advertised independently from select.
+      type: object
+      additionalProperties: false
+      required: [name, datasource, adapter, operations, limits]
+      properties:
+        name:
+          type: string
+        datasource:
+          type: string
+        adapter:
+          type: string
+          const: mysql8
+        operations:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum: [list_objects, describe_object, describe_object_statistics, explain_select, select, select_keyset, aggregate, list_query_shapes]
+        limits:
+          $ref: "./openapi.yaml#/components/schemas/Limits"
+
+    AggregateRequest:
+      description: >-
+        Request envelope selecting one assigned aggregate-enabled policy
+        profile. Missing profile, an empty profile, explicit null, and unknown
+        or case-folded members are invalid requests.
+      type: object
+      additionalProperties: false
+      required: [profile, query]
+      properties:
+        profile:
+          type: string
+          minLength: 1
+        query:
+          $ref: "#/components/schemas/AggregateQuerySpec"
+
+    AggregateQuerySpec:
+      description: >-
+        Closed union of scalar and grouped aggregate queries. Mode is explicit;
+        the server never infers grouping from other members.
+      oneOf:
+        - $ref: "#/components/schemas/ScalarAggregateQuerySpec"
+        - $ref: "#/components/schemas/GroupedAggregateQuerySpec"
+      discriminator:
+        propertyName: mode
+        mapping:
+          scalar: "#/components/schemas/ScalarAggregateQuerySpec"
+          grouped: "#/components/schemas/GroupedAggregateQuerySpec"
+      x-quordon-semantic-validation:
+        - Every source, dimension, measure field, and filter field must be authorized under the same row and field confidentiality scope as SELECT.
+        - Aggregate capability alone never grants weaker row or field visibility than SELECT.
+        - Before any datasource call, output names formed by dimension fields and measure aliases are checked for ASCII case-insensitive collisions; a collision is a semantic 422 UNSUPPORTED_QUERY.
+        - After datasource identifier semantics are known, source identifiers, dimension and filter fields, combined output names, and order targets are canonicalized and checked again under the server semantics.
+        - MySQL 8 field and output-alias uniqueness is checked case-insensitively, so status and STATUS are the same identifier.
+        - Measure aliases must be unique and must not collide with dimension field names under those semantics.
+        - The number of grouped dimensions must not exceed the effective profile max_group_by_fields limit during initial validation, policy revalidation, or startup shape validation.
+        - Aggregate policy-shape identifiers use the same 128-byte portable Identifier bound as requests, each predicate value_types array uses the same 200-item protocol maximum as request values, and explicit empty YAML branch members are rejected rather than normalized to omission.
+        - SUM and AVG accept only numeric source columns.
+        - MIN and MAX accept only portable ordered scalar source columns.
+        - COUNT and COUNT_DISTINCT require a source column supported by the adapter.
+        - The request must match one operator-curated aggregate shape before plan preflight or aggregate execution.
+        - Aggregate policy configuration rejects overlapping client-visible shape signatures at startup. Shape name, required index, plan-estimate bound, and grouped maximum limit do not make otherwise identical signatures distinct; grouped limit ranges begin at one and therefore overlap whenever the remaining signature is equal.
+        - Shape matching uses the complete normalized query: ordered projection, full recursive Boolean topology and predicate multiplicity, every field/operator, placeholder type and arity, ordered sort targets and directions, and requested limit under the shape maximum. Partial field/operator matching is forbidden.
+        - AND/OR children are sorted by canonical representation for matching because the operators are commutative; normalized duplicate children are rejected. Bound parameter values are excluded from the shape; typed range and enum constraints are not supported in this MVP.
+        - The source may be a table or trusted view; administrators own view definitions and schema changes.
+        - The adapter explicitly sets REPEATABLE READ and starts a read-only consistent snapshot before plan preflight and execution, without special DDL protection.
+        - Optional execution-only required_index constrains the accepted plan, requires a matching physical read node when present, and never adds an SQL hint or metadata index lookup.
+        - Preflight and execution use the same statement, connection and transaction. Every read node, including materialized results, must fit the positive maximum_rows_examined_per_scan. Temporary work and filesort require separate optional strict booleans, default false; time buckets require both controls explicitly.
+        - The adapter recursively traverses every table node regardless of alias or source count. Each rows_examined_per_scan is parsed as a non-negative base-10 uint64 and compared with the policy maximum; rows_produced_per_join, filtered, and cost are never substitutes.
+        - Missing, null, string, fractional, negative, malformed, nested-ambiguous, or uint64-overflowing rows_examined_per_scan fails closed with 422 UNSUPPORTED_QUERY before aggregate execution.
+        - EXPLAIN row estimates are heuristic admission signals, not hard execution bounds; the operator accepts possible under-estimation when enabling the curated shape.
+        - count_all and count require the allowed_aggregates value count; count_distinct requires the separate value count_distinct and is never implied by count.
+        - Every order term must resolve to exactly one projected dimension or measure alias after canonicalization.
+        - Repeated normalized order targets are rejected regardless of spelling or direction.
+        - Exact duplicate expressions in any filter group are rejected by OpenAPI with 400 INVALID_REQUEST; repeated predicates or subgroups that become equal after identifier and typed-value normalization are rejected before authorization with 422 UNSUPPORTED_QUERY.
+        - Incompatible field types and unsupported source objects return 422 before aggregate execution.
+
+    ScalarAggregateQuerySpec:
+      description: >-
+        Aggregate without grouping. It returns exactly one row even when no
+        source rows match; COUNT values are zero and nullable measures are null.
+      type: object
+      additionalProperties: false
+      required: [mode, source, projection]
+      properties:
+        mode:
+          type: string
+          const: scalar
+        source:
+          $ref: "./openapi.yaml#/components/schemas/ResourceRef"
+        projection:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/AggregateMeasure"
+        filter:
+          $ref: "#/components/schemas/AggregateFilterExpression"
+
+    GroupedAggregateQuerySpec:
+      description: >-
+        Aggregate grouped by every dimension in projection. Projection order is
+        response column order. At least one dimension and one measure are
+        required. The effective profile max_group_by_fields limit applies to the
+        number of dimensions. limit applies to returned groups; OFFSET is
+        deliberately not supported.
+      type: object
+      additionalProperties: false
+      required: [mode, source, projection, limit]
+      properties:
+        mode:
+          type: string
+          const: grouped
+        source:
+          $ref: "./openapi.yaml#/components/schemas/ResourceRef"
+        projection:
+          type: array
+          minItems: 2
+          maxItems: 100
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/AggregateOutput"
+          allOf:
+            - contains:
+                $ref: "#/components/schemas/AggregateGroupingOutput"
+              minContains: 1
+            - contains:
+                $ref: "#/components/schemas/AggregateMeasure"
+              minContains: 1
+        filter:
+          $ref: "#/components/schemas/AggregateFilterExpression"
+        order_by:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/AggregateOrder"
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+
+    AggregateFilterExpression:
+      description: >-
+        Recursive aggregate filter expression. Every group rejects exact
+        duplicate child expressions at the OpenAPI boundary; runtime also
+        rejects duplicates after identifier and typed-value normalization before
+        minting the aggregate authorization token.
+      oneOf:
+        - $ref: "./openapi.yaml#/components/schemas/FilterPredicate"
+        - $ref: "#/components/schemas/AggregateFilterGroup"
+      discriminator:
+        propertyName: kind
+        mapping:
+          predicate: "./openapi.yaml#/components/schemas/FilterPredicate"
+          group: "#/components/schemas/AggregateFilterGroup"
+      x-quordon-duplicate-semantics:
+        exact-expression-within-group:
+          stage: openapi-validation
+          status: 400
+          code: INVALID_REQUEST
+        normalized-expression-or-subgroup-within-group:
+          stage: pre-authorization-semantic-validation
+          status: 422
+          code: UNSUPPORTED_QUERY
+        recursive: true
+
+    AggregateFilterGroup:
+      description: A parenthesized AND or OR expression with unique children.
+      type: object
+      additionalProperties: false
+      required: [kind, operator, expressions]
+      properties:
+        kind:
+          type: string
+          const: group
+        operator:
+          type: string
+          enum: [and, or]
+        expressions:
+          type: array
+          minItems: 2
+          maxItems: 200
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/AggregateFilterExpression"
+
+    AggregateOutput:
+      description: A grouped dimension, UTC time bucket, or aggregate measure output column.
+      oneOf:
+        - $ref: "#/components/schemas/AggregateDimension"
+        - $ref: "#/components/schemas/TimeBucketDimension"
+        - $ref: "#/components/schemas/AggregateMeasure"
+      discriminator:
+        propertyName: kind
+        mapping:
+          dimension: "#/components/schemas/AggregateDimension"
+          time_bucket: "#/components/schemas/TimeBucketDimension"
+          measure: "#/components/schemas/AggregateMeasure"
+
+    AggregateGroupingOutput:
+      description: An ordinary dimension or a server-generated UTC time bucket.
+      oneOf:
+        - $ref: "#/components/schemas/AggregateDimension"
+        - $ref: "#/components/schemas/TimeBucketDimension"
+
+    AggregateDimension:
+      description: A projected source field that also defines a GROUP BY term.
+      type: object
+      additionalProperties: false
+      required: [kind, field]
+      properties:
+        kind:
+          type: string
+          const: dimension
+        field:
+          $ref: "./openapi.yaml#/components/schemas/Identifier"
+
+    TimeBucketDimension:
+      description: >-
+        Policy-curated temporal grouping dimension. The MySQL 8 adapter accepts
+        only TIMESTAMP or DATETIME source fields, generates the expression
+        itself, and returns the inclusive UTC interval start as a canonical
+        RFC 3339 string. DATETIME values are treated as UTC wall-clock values.
+      type: object
+      additionalProperties: false
+      required: [kind, field, unit, timezone, alias]
+      properties:
+        kind:
+          type: string
+          const: time_bucket
+        field:
+          $ref: "./openapi.yaml#/components/schemas/Identifier"
+        unit:
+          $ref: "#/components/schemas/TimeBucketUnit"
+        timezone:
+          $ref: "#/components/schemas/UTCTimezone"
+        alias:
+          $ref: "./openapi.yaml#/components/schemas/Identifier"
+      x-quordon-semantic-validation:
+        - Time buckets are valid only in grouped aggregate queries.
+        - Exact repeated bucket source fields are rejected before datasource access; datasource-equivalent repetitions are rejected after identifier normalization.
+        - Bucket aliases, ordinary dimension names, and measure aliases must be unique under MySQL field semantics.
+
+    TimeBucketUnit:
+      type: string
+      enum: [hour, day, week, month]
+
+    UTCTimezone:
+      type: string
+      const: UTC
+
+    AggregateMeasure:
+      description: >-
+        A measure with an explicit function branch. Alias is mandatory so
+        response metadata and measure ordering never depend on generated SQL.
+      oneOf:
+        - $ref: "#/components/schemas/CountAllMeasure"
+        - $ref: "#/components/schemas/FieldAggregateMeasure"
+      discriminator:
+        propertyName: function
+        mapping:
+          count_all: "#/components/schemas/CountAllMeasure"
+          count: "#/components/schemas/FieldAggregateMeasure"
+          count_distinct: "#/components/schemas/FieldAggregateMeasure"
+          min: "#/components/schemas/FieldAggregateMeasure"
+          max: "#/components/schemas/FieldAggregateMeasure"
+          sum: "#/components/schemas/FieldAggregateMeasure"
+          avg: "#/components/schemas/FieldAggregateMeasure"
+      x-quordon-policy-function-map:
+        policy-field: profiles.<name>.query.allowed_aggregates
+        default: deny
+        mappings:
+          count_all: count
+          count: count
+          count_distinct: count_distinct
+          min: min
+          max: max
+          sum: sum
+          avg: avg
+        policy-values: [count, count_distinct, min, max, sum, avg]
+        note: >-
+          count_distinct is an explicit opt-in policy value. The count
+          permission covers COUNT(*) and COUNT(field), but never DISTINCT.
+
+    CountAllMeasure:
+      description: COUNT(*) with no source field.
+      type: object
+      additionalProperties: false
+      required: [kind, function, alias]
+      properties:
+        kind:
+          type: string
+          const: measure
+        function:
+          type: string
+          const: count_all
+        alias:
+          $ref: "./openapi.yaml#/components/schemas/Identifier"
+
+    FieldAggregateMeasure:
+      description: >-
+        Aggregate requiring one source field. count counts non-null values;
+        count_distinct counts distinct non-null values.
+      type: object
+      additionalProperties: false
+      required: [kind, function, field, alias]
+      properties:
+        kind:
+          type: string
+          const: measure
+        function:
+          type: string
+          enum: [count, count_distinct, min, max, sum, avg]
+        field:
+          $ref: "./openapi.yaml#/components/schemas/Identifier"
+        alias:
+          $ref: "./openapi.yaml#/components/schemas/Identifier"
+
+    AggregateOrder:
+      description: Closed union of dimension-field, time-bucket-alias, and measure-alias ordering.
+      oneOf:
+        - $ref: "#/components/schemas/DimensionOrder"
+        - $ref: "#/components/schemas/TimeBucketOrder"
+        - $ref: "#/components/schemas/MeasureOrder"
+      discriminator:
+        propertyName: kind
+        mapping:
+          dimension: "#/components/schemas/DimensionOrder"
+          time_bucket: "#/components/schemas/TimeBucketOrder"
+          measure: "#/components/schemas/MeasureOrder"
+
+    DimensionOrder:
+      description: Order by a projected dimension source field.
+      type: object
+      additionalProperties: false
+      required: [kind, field, direction]
+      properties:
+        kind:
+          type: string
+          const: dimension
+        field:
+          $ref: "./openapi.yaml#/components/schemas/Identifier"
+        direction:
+          type: string
+          enum: [asc, desc]
+
+    TimeBucketOrder:
+      description: >-
+        Order by one projected time-bucket alias. Runtime resolves the alias to
+        the projection index and emits the same server-owned expression rather
+        than using the alias as a SQL fragment.
+      type: object
+      additionalProperties: false
+      required: [kind, alias, direction]
+      properties:
+        kind:
+          type: string
+          const: time_bucket
+        alias:
+          $ref: "./openapi.yaml#/components/schemas/Identifier"
+        direction:
+          type: string
+          enum: [asc, desc]
+
+    CanonicalUTCBucketStart:
+      description: >-
+        Server-generated UTC bucket start at second precision. Unit-specific
+        hour, day, ISO-week Monday, and month-start boundaries are additionally
+        enforced as response semantics.
+      type: string
+      format: date-time
+      pattern: '^[0-9]{4}-(0[1-9]|1[0-2])-([0-2][0-9]|3[01])T([01][0-9]|2[0-3]):00:00Z$'
+
+    MeasureOrder:
+      description: Order by a projected aggregate measure alias.
+      type: object
+      additionalProperties: false
+      required: [kind, alias, direction]
+      properties:
+        kind:
+          type: string
+          const: measure
+        alias:
+          $ref: "./openapi.yaml#/components/schemas/Identifier"
+        direction:
+          type: string
+          enum: [asc, desc]
+
+    AggregateResult:
+      description: >-
+        Closed union of scalar and grouped results. mode must equal the request
+        query mode. Columns and positional row values follow projection order.
+      oneOf:
+        - $ref: "#/components/schemas/ScalarAggregateResult"
+        - $ref: "#/components/schemas/GroupedAggregateResult"
+      discriminator:
+        propertyName: mode
+        mapping:
+          scalar: "#/components/schemas/ScalarAggregateResult"
+          grouped: "#/components/schemas/GroupedAggregateResult"
+
+    ScalarAggregateResult:
+      description: >-
+        Scalar aggregate result containing exactly one row. Exact database
+        values are JSON strings and SQL NULL is JSON null. COUNT over an empty
+        input is "0"; nullable measures are null. Scalar results cannot be
+        truncated. If the fixed response envelope, column metadata, or sole row
+        does not fit effective max_result_bytes, the operation returns 413
+        RESULT_TOO_LARGE instead of a partial scalar result. A response row
+        always has exactly as many values as columns; this server-output
+        invariant is covered by runtime contract tests.
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+        - query_id
+        - policy_profile
+        - policy_version
+        - datasource
+        - adapter
+        - columns
+        - rows
+        - row_count
+        - truncated
+        - limits
+        - warnings
+      properties:
+        mode:
+          type: string
+          const: scalar
+        query_id:
+          type: string
+        policy_profile:
+          type: string
+        policy_version:
+          type: string
+        datasource:
+          type: string
+        adapter:
+          type: string
+          const: mysql8
+        columns:
+          $ref: "#/components/schemas/AggregateResultColumns"
+        rows:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            $ref: "#/components/schemas/AggregateResultRow"
+        row_count:
+          type: integer
+          const: 1
+        truncated:
+          type: boolean
+          description: Scalar aggregate results are complete and never truncated.
+          const: false
+        limits:
+          $ref: "./openapi.yaml#/components/schemas/Limits"
+        warnings:
+          $ref: "#/components/schemas/AggregateWarnings"
+
+    GroupedAggregateResult:
+      description: >-
+        Grouped aggregate result containing a bounded prefix of groups. Exact
+        database values are JSON strings and SQL NULL is JSON null. truncated
+        is true whenever an additional group exists but is omitted by the
+        requested/effective row limit or by effective max_result_bytes.
+        Before execution the runtime sizes the fixed JSON envelope and complete
+        column metadata; if they do not fit effective max_result_bytes, it
+        returns 413 RESULT_TOO_LARGE and does not execute the aggregate.
+        Exhaustion while adding rows returns HTTP 200 with the largest prefix of
+        complete rows whose fully JSON-encoded response fits; that prefix may
+        contain zero rows when the first row does not fit. The adapter accounts
+        for string escaping and base64 expansion before materializing a value.
+        A first or later DBMS packet above the separate absolute adapter read
+        bound cannot be represented as a safe prefix and returns 413
+        RESULT_TOO_LARGE instead. row_count equals the number of returned rows;
+        equality is a server-output invariant covered by runtime contract
+        tests.
+      x-quordon-result-byte-semantics:
+        fixed-envelope-or-column-metadata-overflow:
+          status: 413
+          code: RESULT_TOO_LARGE
+          aggregate-executed: false
+          partial-result: false
+        row-addition-overflow:
+          status: 200
+          result: largest-complete-row-prefix
+          empty-prefix-allowed: true
+          truncated: true
+          account-before-materialization: [json-string-escaping, base64-expansion]
+        absolute-packet-overflow:
+          status: 413
+          code: RESULT_TOO_LARGE
+          partial-result: false
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+        - query_id
+        - policy_profile
+        - policy_version
+        - datasource
+        - adapter
+        - columns
+        - rows
+        - row_count
+        - truncated
+        - limits
+        - warnings
+      properties:
+        mode:
+          type: string
+          const: grouped
+        query_id:
+          type: string
+        policy_profile:
+          type: string
+        policy_version:
+          type: string
+        datasource:
+          type: string
+        adapter:
+          type: string
+          const: mysql8
+        columns:
+          $ref: "#/components/schemas/GroupedAggregateResultColumns"
+        rows:
+          type: array
+          maxItems: 1000000
+          items:
+            $ref: "#/components/schemas/GroupedAggregateResultRow"
+        row_count:
+          type: integer
+          minimum: 0
+          maximum: 1000000
+        truncated:
+          type: boolean
+          description: >-
+            True if at least one additional complete group was omitted because
+            of the requested/effective row limit or effective
+            max_result_bytes after the fixed envelope and column metadata fit.
+            Row byte-budget truncation is reported even when the safe prefix is
+            empty.
+        limits:
+          $ref: "./openapi.yaml#/components/schemas/Limits"
+        warnings:
+          $ref: "#/components/schemas/AggregateWarnings"
+
+    AggregateResultColumns:
+      description: Aggregate output columns in request projection order.
+      type: array
+      minItems: 1
+      maxItems: 100
+      items:
+        $ref: "#/components/schemas/AggregateResultColumn"
+
+    AggregateResultRow:
+      description: Positional aggregate values corresponding to result columns.
+      type: array
+      minItems: 1
+      maxItems: 100
+      items:
+        type: [string, "null"]
+
+    GroupedAggregateResultColumns:
+      description: >-
+        Grouped output columns: at least one dimension and one measure, in
+        request projection order.
+      type: array
+      minItems: 2
+      maxItems: 100
+      items:
+        $ref: "#/components/schemas/AggregateResultColumn"
+
+    GroupedAggregateResultRow:
+      description: >-
+        Grouped positional values: at least one dimension value and one measure
+        value, corresponding exactly to the grouped result columns.
+      type: array
+      minItems: 2
+      maxItems: 100
+      items:
+        type: [string, "null"]
+
+    AggregateWarnings:
+      description: Sanitized non-fatal aggregate warnings.
+      type: array
+      maxItems: 100
+      items:
+        type: string
+
+    AggregateResultColumn:
+      description: >-
+        Portable metadata for one aggregate output column. count_all, count,
+        and count_distinct use integer; sum and avg use decimal; min and max
+        preserve the source portable type. The nullable flag reflects SQL
+        aggregate semantics and source metadata. Binary values are represented
+        only as bytes/base64; every other portable type uses string encoding.
+      oneOf:
+        - $ref: "#/components/schemas/StringEncodedAggregateResultColumn"
+        - $ref: "#/components/schemas/Base64EncodedAggregateResultColumn"
+      discriminator:
+        propertyName: encoding
+        mapping:
+          string: "#/components/schemas/StringEncodedAggregateResultColumn"
+          base64: "#/components/schemas/Base64EncodedAggregateResultColumn"
+
+    StringEncodedAggregateResultColumn:
+      description: A non-binary aggregate output encoded as an exact JSON string.
+      type: object
+      additionalProperties: false
+      required: [name, type, encoding, nullable]
+      properties:
+        name:
+          $ref: "./openapi.yaml#/components/schemas/Identifier"
+        type:
+          type: string
+          enum: [integer, decimal, string, date, datetime, time, json]
+        encoding:
+          type: string
+          const: string
+        nullable:
+          type: boolean
+
+    Base64EncodedAggregateResultColumn:
+      description: A binary or spatial aggregate output encoded as standard base64.
+      type: object
+      additionalProperties: false
+      required: [name, type, encoding, nullable]
+      properties:
+        name:
+          $ref: "./openapi.yaml#/components/schemas/Identifier"
+        type:
+          type: string
+          const: bytes
+        encoding:
+          type: string
+          const: base64
+        nullable:
+          type: boolean

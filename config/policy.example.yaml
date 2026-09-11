@@ -1,0 +1,250 @@
+---
+version: 1
+
+server:
+  listen: 127.0.0.1:8080
+
+hard_limits:
+  deadline_ms: 10000
+  max_request_bytes: 262144
+  max_projection_fields: 100
+  max_group_by_fields: 100
+  max_order_by_fields: 100
+  max_predicates: 200
+  max_expression_depth: 16
+  max_parameters: 200
+  max_rows: 5000
+  max_result_bytes: 5242880
+  max_offset: 100000
+  max_concurrency: 8
+
+authentication:
+  basic:
+    realm: quordon
+    users:
+      explain-client:
+        principal: readonly-client
+        # Alternatively, replace the next line with password_hash: "$2y$12$..."
+        password_hash_secret_ref: env:QUORDON_EXPLAIN_PASSWORD_HASH
+
+principals:
+  readonly-client:
+    profiles:
+      - query-explainer
+      - data-reader
+      - analytics
+
+datasources:
+  primary-mysql:
+    adapter: mysql8
+    # Alternatively, replace the next line with an inline dsn value. The
+    # mysql8 adapter owns result encoding: charset is rejected, while collation,
+    # parseTime and columnsWithAlias are canonicalized. This MySQL user needs
+    # scoped SELECT only on allowed tables and trusted views. Administrators
+    # own view definitions and concurrent schema changes.
+    dsn_secret_ref: file:/run/credentials/primary-mysql-dsn
+    tls_required: true
+    required_for_readiness: true
+    pool:
+      max_open_connections: 4
+      max_idle_connections: 2
+      max_connection_lifetime_seconds: 900
+
+profiles:
+  query-explainer:
+    datasource: primary-mysql
+    operations:
+      - explain_select
+    resources:
+      schemas:
+        allow:
+          - application
+      objects:
+        allow:
+          - application.*
+        deny:
+          - application.credentials
+          - application.access_tokens
+      fields:
+        deny:
+          - application.users.password_hash
+          - application.users.secret
+    query:
+      allow_filtering: true
+      allow_group_by: true
+      allow_sorting: true
+      allowed_filter_operators:
+        - eq
+        - ne
+        - lt
+        - lte
+        - gt
+        - gte
+        - in
+        - is_null
+        - is_not_null
+      allowed_aggregates:
+        - count
+        - min
+        - max
+        - sum
+        - avg
+    limits:
+      deadline_ms: 3000
+      max_request_bytes: 65536
+      max_projection_fields: 50
+      max_group_by_fields: 50
+      max_order_by_fields: 50
+      max_predicates: 50
+      max_expression_depth: 8
+      max_parameters: 100
+      max_rows: 1000
+      max_result_bytes: 1048576
+      max_offset: 10000
+      max_concurrency: 2
+
+  data-reader:
+    datasource: primary-mysql
+    operations:
+      - list_objects
+      - describe_object
+      - describe_object_statistics
+      - select
+    resources:
+      schemas:
+        allow:
+          - application
+      objects:
+        allow:
+          - application.orders
+          - application.customers
+      fields:
+        allow:
+          - application.orders.*
+          - application.customers.id
+          - application.customers.name
+        deny:
+          - application.customers.internal_note
+    query:
+      allow_filtering: true
+      allow_group_by: false
+      allow_sorting: false
+      allowed_filter_operators:
+        - eq
+        - ne
+        - lt
+        - lte
+        - gt
+        - gte
+        - in
+        - is_null
+        - is_not_null
+      allowed_aggregates: []
+    limits:
+      deadline_ms: 1500
+      max_request_bytes: 32768
+      max_projection_fields: 25
+      max_group_by_fields: 1
+      max_order_by_fields: 10
+      max_predicates: 25
+      max_expression_depth: 6
+      max_parameters: 50
+      max_rows: 100
+      max_result_bytes: 262144
+      max_offset: 0
+      max_concurrency: 1
+
+  analytics:
+    datasource: primary-mysql
+    operations:
+      - aggregate
+      - select_keyset
+      - list_query_shapes
+    resources:
+      schemas:
+        allow:
+          - application
+      objects:
+        allow:
+          - application.orders
+      fields:
+        allow:
+          - application.orders.id
+          - application.orders.status
+          - application.orders.created_at
+    query:
+      allow_filtering: true
+      allow_group_by: true
+      allow_sorting: true
+      allowed_filter_operators:
+        - eq
+      allowed_aggregates:
+        - count
+        - max
+      aggregate_shapes:
+        - name: orders_by_status
+          public_description: Count orders grouped by their current status.
+          mode: grouped
+          source:
+            schema: application
+            name: orders
+          projection:
+            - kind: dimension
+              field: status
+            - kind: measure
+              function: count_all
+              alias: orders_count
+          maximum_limit: 100
+          required_index: idx_orders_status
+          maximum_rows_examined_per_scan: 100000
+        - name: orders_for_status
+          public_description: Count orders and show the latest creation time for one status.
+          mode: scalar
+          source:
+            schema: application
+            name: orders
+          projection:
+            - kind: measure
+              function: count_all
+              alias: orders_count
+            - kind: measure
+              function: max
+              field: created_at
+              alias: latest_created_at
+          filter:
+            kind: predicate
+            field: status
+            operator: eq
+            value_types: [string]
+          required_index: idx_orders_status
+          maximum_rows_examined_per_scan: 100000
+      keyset_select_shapes:
+        - name: orders_by_id
+          public_description: Page through orders in stable primary-key order.
+          source:
+            schema: application
+            name: orders
+          projection:
+            - kind: field
+              field: id
+            - kind: field
+              field: status
+          order_by:
+            - field: id
+              direction: asc
+          maximum_limit: 100
+          required_index: PRIMARY
+          maximum_rows_examined_per_scan: 100000
+    limits:
+      deadline_ms: 3000
+      max_request_bytes: 65536
+      max_projection_fields: 50
+      max_group_by_fields: 20
+      max_order_by_fields: 20
+      max_predicates: 50
+      max_expression_depth: 8
+      max_parameters: 100
+      max_rows: 1000
+      max_result_bytes: 1048576
+      max_offset: 0
+      max_concurrency: 2
