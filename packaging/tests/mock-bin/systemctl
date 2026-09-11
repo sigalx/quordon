@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+
+printf 'systemctl %s\n' "$*" >>"$QUORDON_MAINTSCRIPT_TEST_LOG"
+
+if [ "${1:-}" = --system ]; then
+    shift
+fi
+
+case "${1:-}" in
+    is-active)
+        if [ "${QUORDON_TEST_SYSTEMD_ACTIVE:-no}" = yes ]; then
+            exit 0
+        fi
+        exit 3
+        ;;
+    daemon-reload|start)
+        exit 0
+        ;;
+    *)
+        echo "unexpected mocked systemctl invocation: $*" >&2
+        exit 64
+        ;;
+esac

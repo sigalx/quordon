@@ -1,0 +1,41 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: quordon
+Upstream-Contact: Andrey Shcheglov <sigalx@sigalx.ru>
+Source: https://github.com/sigalx/quordon
+
+Files: *
+Copyright: 2026 Andrey Shcheglov and Quordon contributors
+License: Apache-2.0
+ See /usr/share/common-licenses/Apache-2.0 for the complete license text.
+
+Files: third_party/go-sql-driver/mysql/*
+Copyright: 2012 The Go-MySQL-Driver Authors
+License: MPL-2.0
+ See /usr/share/common-licenses/MPL-2.0 for the complete license text.
+
+Files: third_party/licenses/go-standard-library-BSD-3-Clause.txt
+Copyright: 2009 The Go Authors
+License: BSD-3-Clause
+ The complete notice is installed at
+ /usr/share/doc/quordon/third-party/licenses/go-standard-library-BSD-3-Clause.txt.
+
+Files: third_party/licenses/filippo.io-edwards25519-BSD-3-Clause.txt
+Copyright: 2009 The Go Authors
+License: BSD-3-Clause
+ The complete notice is installed at
+ /usr/share/doc/quordon/third-party/licenses/filippo.io-edwards25519-BSD-3-Clause.txt.
+
+Files: third_party/licenses/golang.org-x-crypto-BSD-3-Clause.txt
+Copyright: 2009 The Go Authors
+License: BSD-3-Clause
+ The complete notice is installed at
+ /usr/share/doc/quordon/third-party/licenses/golang.org-x-crypto-BSD-3-Clause.txt.
+
+Files: third_party/licenses/gopkg.in-yaml.v3-MIT-and-Apache-2.0.txt
+Copyright: 2006-2011 Kirill Simonov
+           2011-2019 Canonical Ltd
+License: MIT and Apache-2.0
+ The complete upstream notice is installed at
+ /usr/share/doc/quordon/third-party/licenses/gopkg.in-yaml.v3-MIT-and-Apache-2.0.txt.
+ The complete Apache-2.0 license is available at
+ /usr/share/common-licenses/Apache-2.0.

@@ -1,0 +1,41 @@
+[Unit]
+Description=Quordon policy-enforcing infrastructure gateway
+Documentation=https://github.com/sigalx/quordon
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/quordon/policy.yaml
+
+[Service]
+Type=simple
+User=quordon
+Group=quordon
+ExecStart=/usr/bin/quordon --config /etc/quordon/policy.yaml
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+UMask=0077
+
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RemoveIPC=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

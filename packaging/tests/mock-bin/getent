@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+if [ "${QUORDON_TEST_NSS_SHADOW:-}" = group ] && [ "$#" -eq 2 ] && \
+    [ "$1" = group ] && [ "$2" = quordon ]; then
+    printf '%s\n' 'quordon:x:777:'
+    exit 0
+fi
+
+if [ "${QUORDON_TEST_NSS_SHADOW:-}" = passwd ] && [ "$#" -eq 2 ] && \
+    [ "$1" = passwd ] && [ "$2" = quordon ]; then
+    printf '%s\n' 'quordon:x:777:777:Shadowed Quordon:/nonexistent:/usr/sbin/nologin'
+    exit 0
+fi
+
+exec /usr/bin/getent "$@"
