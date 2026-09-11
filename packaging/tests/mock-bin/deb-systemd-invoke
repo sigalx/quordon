@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+printf 'deb-systemd-invoke %s\n' "$*" >>"$QUORDON_MAINTSCRIPT_TEST_LOG"
+
+if [ "${1:-}" = restart ] && [ "${QUORDON_TEST_INVOKE_RESTART_FAIL:-no}" = yes ]; then
+    exit 1
+fi
+
+exit 0

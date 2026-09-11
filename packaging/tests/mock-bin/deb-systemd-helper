@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+printf 'deb-systemd-helper %s\n' "$*" >>"$QUORDON_MAINTSCRIPT_TEST_LOG"
+exit 0

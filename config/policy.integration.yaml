@@ -1,0 +1,307 @@
+version: 1
+
+server:
+  listen: :8080
+
+hard_limits:
+  deadline_ms: 10000
+  max_request_bytes: 262144
+  max_projection_fields: 100
+  max_group_by_fields: 100
+  max_order_by_fields: 100
+  max_predicates: 200
+  max_expression_depth: 16
+  max_parameters: 200
+  max_rows: 5000
+  max_result_bytes: 5242880
+  max_offset: 100000
+  max_concurrency: 8
+
+authentication:
+  basic:
+    realm: quordon
+    users:
+      integration-client:
+        principal: integration-client
+        password_hash_secret_ref: env:QUORDON_EXPLAIN_PASSWORD_HASH
+
+principals:
+  integration-client:
+    profiles: [query-explainer, data-reader, metadata-reader, analytics]
+
+datasources:
+  integration-mysql:
+    adapter: mysql8
+    # The adapter must override all result-affecting options: query values stay
+    # server-side binds, text is UTF8MB4, and column names stay unqualified.
+    # testdata/mysql-init.sql also grants BACKUP_ADMIN for the DDL guard.
+    dsn: "quordon:quordon-password@tcp(mysql:3306)/?parseTime=true&interpolateParams=true&columnsWithAlias=true&collation=latin1_swedish_ci"
+    tls_required: false
+    required_for_readiness: true
+    pool:
+      max_open_connections: 2
+      max_idle_connections: 1
+      max_connection_lifetime_seconds: 60
+
+profiles:
+  query-explainer:
+    datasource: integration-mysql
+    operations: [explain_select]
+    resources:
+      schemas:
+        allow: [application]
+      objects:
+        # The case-colliding view is authorized deliberately: the adapter must
+        # still reject it when lower_case_table_names=0.
+        allow: [application.orders, application.Orders]
+      fields:
+        allow: [application.orders.*, application.Orders.*]
+    query:
+      allow_filtering: true
+      allow_group_by: true
+      allow_sorting: true
+      allowed_filter_operators: [eq, in, is_null, is_not_null]
+      allowed_aggregates: [count, min, max, sum, avg]
+    limits:
+      deadline_ms: 3000
+      max_request_bytes: 65536
+      max_projection_fields: 50
+      max_group_by_fields: 50
+      max_order_by_fields: 50
+      max_predicates: 50
+      max_expression_depth: 8
+      max_parameters: 100
+      max_rows: 1000
+      max_result_bytes: 1048576
+      max_offset: 10000
+      max_concurrency: 2
+
+  data-reader:
+    datasource: integration-mysql
+    operations: [list_objects, describe_object, describe_object_statistics, select]
+    resources:
+      schemas:
+        allow: [application]
+      objects:
+        # The case-colliding view is authorized deliberately so the executable
+        # SELECT adapter, rather than policy filtering, must reject it.
+        allow:
+          - application.orders
+          - application.Orders
+          - application.partitioned_orders
+          - application.subpartitioned_events
+          - application.legacy_exact_rows
+      fields:
+        allow: [application.orders.*, application.Orders.*]
+    query:
+      allow_filtering: true
+      allow_group_by: false
+      allow_sorting: true
+      allowed_filter_operators: [eq, in, is_null, is_not_null]
+      allowed_aggregates: []
+    limits:
+      deadline_ms: 3000
+      max_request_bytes: 65536
+      max_projection_fields: 50
+      max_group_by_fields: 1
+      max_order_by_fields: 50
+      max_predicates: 50
+      max_expression_depth: 8
+      max_parameters: 100
+      max_rows: 100
+      max_result_bytes: 1048576
+      max_offset: 10000
+      max_concurrency: 2
+
+  metadata-reader:
+    datasource: integration-mysql
+    operations: [list_objects, describe_object]
+    resources:
+      schemas:
+        allow: [application]
+      objects:
+        allow: [application.orders]
+      fields:
+        allow: [application.orders.id]
+    query:
+      allow_filtering: false
+      allow_group_by: false
+      allow_sorting: false
+      allowed_filter_operators: []
+      allowed_aggregates: []
+    limits:
+      deadline_ms: 3000
+      max_request_bytes: 65536
+      max_projection_fields: 50
+      max_group_by_fields: 1
+      max_order_by_fields: 1
+      max_predicates: 50
+      max_expression_depth: 8
+      max_parameters: 100
+      max_rows: 100
+      max_result_bytes: 256
+      max_offset: 10000
+      max_concurrency: 2
+
+  analytics:
+    datasource: integration-mysql
+    operations: [aggregate, select_keyset, list_query_shapes]
+    resources:
+      schemas:
+        allow: [application]
+      objects:
+        allow: [application.orders]
+      fields:
+        allow: [application.orders.*]
+    query:
+      allow_filtering: true
+      allow_group_by: true
+      allow_sorting: true
+      allowed_filter_operators: [eq, gte, is_null, is_not_null]
+      allowed_aggregates: [count, min, max, sum, avg]
+      aggregate_shapes:
+        - name: orders_by_created_day
+          public_description: Count orders grouped by their UTC creation day.
+          mode: grouped
+          source:
+            schema: application
+            name: orders
+          projection:
+            - kind: time_bucket
+              field: created_at
+              unit: day
+              timezone: UTC
+              alias: created_day
+            - kind: measure
+              function: count_all
+              alias: orders_count
+          order_by:
+            - kind: time_bucket
+              alias: created_day
+              direction: asc
+          maximum_limit: 20
+          required_index: idx_orders_created_at
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+
+        - name: orders_by_status
+          public_description: Count and sum orders grouped by status.
+          mode: grouped
+          source:
+            schema: application
+            name: orders
+          projection:
+            - kind: dimension
+              field: status
+            - kind: measure
+              function: count_all
+              alias: orders_count
+            - kind: measure
+              function: sum
+              field: amount
+              alias: amount_sum
+          maximum_limit: 20
+          required_index: idx_orders_status
+          maximum_rows_examined_per_scan: 100
+        - name: active_orders_summary
+          public_description: Count active orders and show the latest creation time.
+          mode: scalar
+          source:
+            schema: application
+            name: orders
+          projection:
+            - kind: measure
+              function: count_all
+              alias: orders_count
+            - kind: measure
+              function: max
+              field: created_at
+              alias: latest_created_at
+          filter:
+            kind: predicate
+            field: status
+            operator: eq
+            value_types: [string]
+          required_index: idx_orders_status
+          maximum_rows_examined_per_scan: 100
+        - name: invisible_index_rejected
+          mode: scalar
+          source:
+            schema: application
+            name: orders
+          projection:
+            - kind: measure
+              function: count_all
+              alias: invisible_index_count
+          filter:
+            kind: predicate
+            field: status
+            operator: eq
+            value_types: [string]
+          required_index: idx_orders_invisible
+          maximum_rows_examined_per_scan: 100
+        - name: missing_order_summary
+          mode: scalar
+          source:
+            schema: application
+            name: orders
+          projection:
+            - kind: measure
+              function: count_all
+              alias: missing_orders_count
+            - kind: measure
+              function: max
+              field: created_at
+              alias: latest_missing_created_at
+          filter:
+            kind: predicate
+            field: id
+            operator: eq
+            value_types: [integer]
+          required_index: PRIMARY
+          maximum_rows_examined_per_scan: 1
+      keyset_select_shapes:
+        - name: orders_by_id
+          public_description: Page through orders in stable primary-key order.
+          source:
+            schema: application
+            name: orders
+          projection:
+            - kind: field
+              field: id
+            - kind: field
+              field: status
+            - kind: field
+              field: amount
+          filter:
+            kind: group
+            operator: and
+            expressions:
+              - kind: predicate
+                field: amount
+                operator: gte
+                value_types: [decimal]
+              - kind: predicate
+                field: id
+                operator: gte
+                value_types: [integer]
+          order_by:
+            - field: id
+              direction: asc
+          maximum_limit: 20
+          required_index: PRIMARY
+          maximum_rows_examined_per_scan: 100
+    limits:
+      deadline_ms: 3000
+      max_request_bytes: 65536
+      max_projection_fields: 50
+      max_group_by_fields: 20
+      max_order_by_fields: 20
+      max_predicates: 50
+      max_expression_depth: 8
+      max_parameters: 100
+      max_rows: 1000
+      max_result_bytes: 1048576
+      max_offset: 0
+      max_concurrency: 2
