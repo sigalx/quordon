@@ -65,7 +65,7 @@ paths:
         execution revalidates all of them and may return 422 UNSUPPORTED_QUERY
         after concurrent DDL or schema drift. Missing Accept, */*, and
         application/json select the single complete JSON representation, including
-        aggregate, time_bucket, keyset SELECT, and source_text templates. Retired
+        aggregate, time_bucket, numeric_bucket, keyset SELECT, and source_text templates. Retired
         vendor media types are rejected with 400 INVALID_REQUEST; lists are never partial.
       x-quordon-status: stable
       x-quordon-capability: list_query_shapes
@@ -1101,6 +1101,46 @@ components:
         field:
           $ref: "#/components/schemas/Identifier"
 
+    NumericBucketDimensionDiscovery:
+      description: >-
+        Policy-curated exact INTEGER or DECIMAL grouping; FLOAT/DOUBLE and other
+        source types produce semantic 422 UNSUPPORTED_QUERY. With N strictly
+        increasing policy boundaries, index 0 is below the first boundary,
+        index i represents [boundary[i-1], boundary[i]), and N starts at the
+        last boundary inclusively. Output type is integer with string encoding;
+        only source DB NULL produces null, and nullable follows source metadata.
+        Only nonempty groups are returned; empty input gives an empty grouped
+        result. Requests never contain boundaries. Boundaries may be fractional
+        for integer sources or lie outside the source range. Adapter precision
+        limits are checked before EXPLAIN and the main SELECT.
+      type: object
+      additionalProperties: false
+      required: [kind, field, alias, boundaries]
+      properties:
+        kind: {type: string, const: numeric_bucket}
+        field: {$ref: "./openapi.yaml#/components/schemas/Identifier"}
+        alias: {$ref: "./openapi.yaml#/components/schemas/Identifier"}
+        boundaries:
+          description: Canonical policy-owned fixed-point decimals in strictly increasing numeric order. Omit this member when constructing an aggregate request.
+          type: array
+          minItems: 1
+          maxItems: 64
+          uniqueItems: true
+          items:
+            type: string
+            maxLength: 128
+            pattern: '^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$'
+
+    NumericBucketOrderDiscovery:
+      description: Numeric bucket index order; NULL comes first ascending and last descending. Without order_by the order is unspecified.
+      type: object
+      additionalProperties: false
+      required: [kind, alias, direction]
+      properties:
+        kind: {type: string, const: numeric_bucket}
+        alias: {$ref: "./openapi.yaml#/components/schemas/Identifier"}
+        direction: {type: string, enum: [asc, desc]}
+
     TimeBucketDimensionDiscovery:
       type: object
       additionalProperties: false
@@ -1367,27 +1407,32 @@ components:
       oneOf:
         - $ref: "#/components/schemas/AggregateDimensionDiscovery"
         - $ref: "#/components/schemas/TimeBucketDimensionDiscovery"
+        - $ref: "#/components/schemas/NumericBucketDimensionDiscovery"
         - $ref: "#/components/schemas/AggregateMeasureDiscovery"
       discriminator:
         propertyName: kind
         mapping:
           dimension: "#/components/schemas/AggregateDimensionDiscovery"
           time_bucket: "#/components/schemas/TimeBucketDimensionDiscovery"
+          numeric_bucket: "#/components/schemas/NumericBucketDimensionDiscovery"
           measure: "#/components/schemas/AggregateMeasureDiscovery"
 
     AggregateGroupingOutput:
       oneOf:
         - $ref: "#/components/schemas/AggregateDimensionDiscovery"
         - $ref: "#/components/schemas/TimeBucketDimensionDiscovery"
+        - $ref: "#/components/schemas/NumericBucketDimensionDiscovery"
 
     AggregateOrder:
       oneOf:
         - $ref: "#/components/schemas/DimensionOrderDiscovery"
         - $ref: "#/components/schemas/TimeBucketOrderDiscovery"
+        - $ref: "#/components/schemas/NumericBucketOrderDiscovery"
         - $ref: "#/components/schemas/MeasureOrderDiscovery"
       discriminator:
         propertyName: kind
         mapping:
           dimension: "#/components/schemas/DimensionOrderDiscovery"
           time_bucket: "#/components/schemas/TimeBucketOrderDiscovery"
+          numeric_bucket: "#/components/schemas/NumericBucketOrderDiscovery"
           measure: "#/components/schemas/MeasureOrderDiscovery"

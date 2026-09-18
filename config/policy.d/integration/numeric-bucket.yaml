@@ -1,0 +1,907 @@
+{
+  "datasource": "integration-mysql",
+  "operations": [
+    "aggregate",
+    "list_query_shapes"
+  ],
+  "resources": {
+    "schemas": {
+      "allow": [
+        "application"
+      ]
+    },
+    "objects": {
+      "allow": [
+        "application.numeric_distribution"
+      ]
+    },
+    "fields": {
+      "allow": [
+        "application.numeric_distribution.*"
+      ],
+      "deny": [
+        "application.numeric_distribution.hidden_value"
+      ]
+    }
+  },
+  "query": {
+    "allow_filtering": true,
+    "allow_group_by": true,
+    "allow_sorting": true,
+    "allowed_filter_operators": [
+      "eq",
+      "gte"
+    ],
+    "allowed_aggregates": [
+      "count",
+      "count_distinct",
+      "min",
+      "max",
+      "sum",
+      "avg"
+    ],
+    "aggregate_shapes": [
+      {
+        "name": "signed_value_asc",
+        "mode": "grouped",
+        "source": {
+          "schema": "application",
+          "name": "numeric_distribution"
+        },
+        "projection": [
+          {
+            "kind": "numeric_bucket",
+            "field": "signed_value",
+            "alias": "signed_value_bucket",
+            "boundaries": [
+              "-9223372036854775809",
+              "-1.5",
+              "0",
+              "1.5",
+              "9007199254740993",
+              "9223372036854775808"
+            ]
+          },
+          {
+            "kind": "measure",
+            "function": "count_all",
+            "alias": "total"
+          }
+        ],
+        "maximum_limit": 100,
+        "maximum_rows_examined_per_scan": 1000,
+        "allow_temporary_table": true,
+        "allow_filesort": true,
+        "order_by": [
+          {
+            "kind": "numeric_bucket",
+            "alias": "signed_value_bucket",
+            "direction": "asc"
+          }
+        ]
+      },
+      {
+        "name": "signed_value_desc",
+        "mode": "grouped",
+        "source": {
+          "schema": "application",
+          "name": "numeric_distribution"
+        },
+        "projection": [
+          {
+            "kind": "numeric_bucket",
+            "field": "signed_value",
+            "alias": "signed_value_bucket",
+            "boundaries": [
+              "-9223372036854775809",
+              "-1.5",
+              "0",
+              "1.5",
+              "9007199254740993",
+              "9223372036854775808"
+            ]
+          },
+          {
+            "kind": "measure",
+            "function": "count_all",
+            "alias": "total"
+          }
+        ],
+        "maximum_limit": 100,
+        "maximum_rows_examined_per_scan": 1000,
+        "allow_temporary_table": true,
+        "allow_filesort": true,
+        "order_by": [
+          {
+            "kind": "numeric_bucket",
+            "alias": "signed_value_bucket",
+            "direction": "desc"
+          }
+        ]
+      },
+      {
+        "name": "signed_value_unordered",
+        "mode": "grouped",
+        "source": {
+          "schema": "application",
+          "name": "numeric_distribution"
+        },
+        "projection": [
+          {
+            "kind": "numeric_bucket",
+            "field": "signed_value",
+            "alias": "signed_value_unordered",
+            "boundaries": [
+              "-9223372036854775809",
+              "-1.5",
+              "0",
+              "1.5",
+              "9007199254740993",
+              "9223372036854775808"
+            ]
+          },
+          {
+            "kind": "measure",
+            "function": "count_all",
+            "alias": "total"
+          }
+        ],
+        "maximum_limit": 100,
+        "maximum_rows_examined_per_scan": 1000,
+        "allow_temporary_table": true,
+        "allow_filesort": true
+      },
+      {
+        "name": "signed_value_empty",
+        "mode": "grouped",
+        "source": {
+          "schema": "application",
+          "name": "numeric_distribution"
+        },
+        "projection": [
+          {
+            "kind": "numeric_bucket",
+            "field": "signed_value",
+            "alias": "signed_value_empty",
+            "boundaries": [
+              "-9223372036854775809",
+              "-1.5",
+              "0",
+              "1.5",
+              "9007199254740993",
+              "9223372036854775808"
+            ]
+          },
+          {
+            "kind": "measure",
+            "function": "count_all",
+            "alias": "total"
+          }
+        ],
+        "maximum_limit": 100,
+        "maximum_rows_examined_per_scan": 1000,
+        "allow_temporary_table": true,
+        "allow_filesort": true,
+        "filter": {
+          "kind": "predicate",
+          "field": "id",
+          "operator": "eq",
+          "value_types": [
+            "integer"
+          ]
+        }
+      },
+      {
+        "name": "unsigned_value_asc",
+        "mode": "grouped",
+        "source": {
+          "schema": "application",
+          "name": "numeric_distribution"
+        },
+        "projection": [
+          {
+            "kind": "numeric_bucket",
+            "field": "unsigned_value",
+            "alias": "unsigned_value_bucket",
+            "boundaries": [
+              "-1.5",
+              "0",
+              "1.5",
+              "9007199254740993",
+              "18446744073709551615",
+              "18446744073709551616"
+            ]
+          },
+          {
+            "kind": "measure",
+            "function": "count_all",
+            "alias": "total"
+          }
+        ],
+        "maximum_limit": 100,
+        "maximum_rows_examined_per_scan": 1000,
+        "allow_temporary_table": true,
+        "allow_filesort": true,
+        "order_by": [
+          {
+            "kind": "numeric_bucket",
+            "alias": "unsigned_value_bucket",
+            "direction": "asc"
+          }
+        ]
+      },
+      {
+        "name": "unsigned_value_desc",
+        "mode": "grouped",
+        "source": {
+          "schema": "application",
+          "name": "numeric_distribution"
+        },
+        "projection": [
+          {
+            "kind": "numeric_bucket",
+            "field": "unsigned_value",
+            "alias": "unsigned_value_bucket",
+            "boundaries": [
+              "-1.5",
+              "0",
+              "1.5",
+              "9007199254740993",
+              "18446744073709551615",
+              "18446744073709551616"
+            ]
+          },
+          {
+            "kind": "measure",
+            "function": "count_all",
+            "alias": "total"
+          }
+        ],
+        "maximum_limit": 100,
+        "maximum_rows_examined_per_scan": 1000,
+        "allow_temporary_table": true,
+        "allow_filesort": true,
+        "order_by": [
+          {
+            "kind": "numeric_bucket",
+            "alias": "unsigned_value_bucket",
+            "direction": "desc"
+          }
+        ]
+      },
+      {
+        "name": "unsigned_value_unordered",
+        "mode": "grouped",
+        "source": {
+          "schema": "application",
+          "name": "numeric_distribution"
+        },
+        "projection": [
+          {
+            "kind": "numeric_bucket",
+            "field": "unsigned_value",
+            "alias": "unsigned_value_unordered",
+            "boundaries": [
+              "-1.5",
+              "0",
+              "1.5",
+              "9007199254740993",
+              "18446744073709551615",
+              "18446744073709551616"
+            ]
+          },
+          {
+            "kind": "measure",
+            "function": "count_all",
+            "alias": "total"
+          }
+        ],
+        "maximum_limit": 100,
+        "maximum_rows_examined_per_scan": 1000,
+        "allow_temporary_table": true,
+        "allow_filesort": true
+      },
+      {
+        "name": "unsigned_value_empty",
+        "mode": "grouped",
+        "source": {
+          "schema": "application",
+          "name": "numeric_distribution"
+        },
+        "projection": [
+          {
+            "kind": "numeric_bucket",
+            "field": "unsigned_value",
+            "alias": "unsigned_value_empty",
+            "boundaries": [
+              "-1.5",
+              "0",
+              "1.5",
+              "9007199254740993",
+              "18446744073709551615",
+              "18446744073709551616"
+            ]
+          },
+          {
+            "kind": "measure",
+            "function": "count_all",
+            "alias": "total"
+          }
+        ],
+        "maximum_limit": 100,
+        "maximum_rows_examined_per_scan": 1000,
+        "allow_temporary_table": true,
+        "allow_filesort": true,
+        "filter": {
+          "kind": "predicate",
+          "field": "id",
+          "operator": "eq",
+          "value_types": [
+            "integer"
+          ]
+        }
+      },
+      {
+        "name": "decimal_value_asc",
+        "mode": "grouped",
+        "source": {
+          "schema": "application",
+          "name": "numeric_distribution"
+        },
+        "projection": [
+          {
+            "kind": "numeric_bucket",
+            "field": "decimal_value",
+            "alias": "decimal_value_bucket",
+            "boundaries": [
+              "-123.5",
+              "0",
+              "0.000000000000000000000000000001",
+              "1.5",
+              "9007199254740993",
+              "99999999999999999999999999999999999"
+            ]
+          },
+          {
+            "kind": "measure",
+            "function": "count_all",
+            "alias": "total"
+          }
+        ],
+        "maximum_limit": 100,
+        "maximum_rows_examined_per_scan": 1000,
+        "allow_temporary_table": true,
+        "allow_filesort": true,
+        "order_by": [
+          {
+            "kind": "numeric_bucket",
+            "alias": "decimal_value_bucket",
+            "direction": "asc"
+          }
+        ]
+      },
+      {
+        "name": "decimal_value_desc",
+        "mode": "grouped",
+        "source": {
+          "schema": "application",
+          "name": "numeric_distribution"
+        },
+        "projection": [
+          {
+            "kind": "numeric_bucket",
+            "field": "decimal_value",
+            "alias": "decimal_value_bucket",
+            "boundaries": [
+              "-123.5",
+              "0",
+              "0.000000000000000000000000000001",
+              "1.5",
+              "9007199254740993",
+              "99999999999999999999999999999999999"
+            ]
+          },
+          {
+            "kind": "measure",
+            "function": "count_all",
+            "alias": "total"
+          }
+        ],
+        "maximum_limit": 100,
+        "maximum_rows_examined_per_scan": 1000,
+        "allow_temporary_table": true,
+        "allow_filesort": true,
+        "order_by": [
+          {
+            "kind": "numeric_bucket",
+            "alias": "decimal_value_bucket",
+            "direction": "desc"
+          }
+        ]
+      },
+      {
+        "name": "decimal_value_unordered",
+        "mode": "grouped",
+        "source": {
+          "schema": "application",
+          "name": "numeric_distribution"
+        },
+        "projection": [
+          {
+            "kind": "numeric_bucket",
+            "field": "decimal_value",
+            "alias": "decimal_value_unordered",
+            "boundaries": [
+              "-123.5",
+              "0",
+              "0.000000000000000000000000000001",
+              "1.5",
+              "9007199254740993",
+              "99999999999999999999999999999999999"
+            ]
+          },
+          {
+            "kind": "measure",
+            "function": "count_all",
+            "alias": "total"
+          }
+        ],
+        "maximum_limit": 100,
+        "maximum_rows_examined_per_scan": 1000,
+        "allow_temporary_table": true,
+        "allow_filesort": true
+      },
+      {
+        "name": "decimal_value_empty",
+        "mode": "grouped",
+        "source": {
+          "schema": "application",
+          "name": "numeric_distribution"
+        },
+        "projection": [
+          {
+            "kind": "numeric_bucket",
+            "field": "decimal_value",
+            "alias": "decimal_value_empty",
+            "boundaries": [
+              "-123.5",
+              "0",
+              "0.000000000000000000000000000001",
+              "1.5",
+              "9007199254740993",
+              "99999999999999999999999999999999999"
+            ]
+          },
+          {
+            "kind": "measure",
+            "function": "count_all",
+            "alias": "total"
+          }
+        ],
+        "maximum_limit": 100,
+        "maximum_rows_examined_per_scan": 1000,
+        "allow_temporary_table": true,
+        "allow_filesort": true,
+        "filter": {
+          "kind": "predicate",
+          "field": "id",
+          "operator": "eq",
+          "value_types": [
+            "integer"
+          ]
+        }
+      },
+      {
+        "name": "float_value_unsupported",
+        "mode": "grouped",
+        "source": {
+          "schema": "application",
+          "name": "numeric_distribution"
+        },
+        "projection": [
+          {
+            "kind": "numeric_bucket",
+            "field": "float_value",
+            "alias": "float_value_bucket",
+            "boundaries": [
+              "0",
+              "100"
+            ]
+          },
+          {
+            "kind": "measure",
+            "function": "count_all",
+            "alias": "total"
+          }
+        ],
+        "maximum_limit": 100,
+        "maximum_rows_examined_per_scan": 1000,
+        "allow_temporary_table": true,
+        "allow_filesort": true
+      },
+      {
+        "name": "double_value_unsupported",
+        "mode": "grouped",
+        "source": {
+          "schema": "application",
+          "name": "numeric_distribution"
+        },
+        "projection": [
+          {
+            "kind": "numeric_bucket",
+            "field": "double_value",
+            "alias": "double_value_bucket",
+            "boundaries": [
+              "0",
+              "100"
+            ]
+          },
+          {
+            "kind": "measure",
+            "function": "count_all",
+            "alias": "total"
+          }
+        ],
+        "maximum_limit": 100,
+        "maximum_rows_examined_per_scan": 1000,
+        "allow_temporary_table": true,
+        "allow_filesort": true
+      },
+      {
+        "name": "text_value_unsupported",
+        "mode": "grouped",
+        "source": {
+          "schema": "application",
+          "name": "numeric_distribution"
+        },
+        "projection": [
+          {
+            "kind": "numeric_bucket",
+            "field": "text_value",
+            "alias": "text_value_bucket",
+            "boundaries": [
+              "0",
+              "100"
+            ]
+          },
+          {
+            "kind": "measure",
+            "function": "count_all",
+            "alias": "total"
+          }
+        ],
+        "maximum_limit": 100,
+        "maximum_rows_examined_per_scan": 1000,
+        "allow_temporary_table": true,
+        "allow_filesort": true
+      },
+      {
+        "name": "precision_unsupported",
+        "mode": "grouped",
+        "source": {
+          "schema": "application",
+          "name": "numeric_distribution"
+        },
+        "projection": [
+          {
+            "kind": "numeric_bucket",
+            "field": "decimal_value",
+            "alias": "precision_bucket",
+            "boundaries": [
+              "999999999999999999999999999999999999999999999999999999999999999999"
+            ]
+          },
+          {
+            "kind": "measure",
+            "function": "count_all",
+            "alias": "total"
+          }
+        ],
+        "maximum_limit": 100,
+        "maximum_rows_examined_per_scan": 1000,
+        "allow_temporary_table": true,
+        "allow_filesort": true
+      },
+      {
+        "name": "scale_unsupported",
+        "mode": "grouped",
+        "source": {
+          "schema": "application",
+          "name": "numeric_distribution"
+        },
+        "projection": [
+          {
+            "kind": "numeric_bucket",
+            "field": "decimal_value",
+            "alias": "scale_bucket",
+            "boundaries": [
+              "0.0000000000000000000000000000001"
+            ]
+          },
+          {
+            "kind": "measure",
+            "function": "count_all",
+            "alias": "total"
+          }
+        ],
+        "maximum_limit": 100,
+        "maximum_rows_examined_per_scan": 1000,
+        "allow_temporary_table": true,
+        "allow_filesort": true
+      },
+      {
+        "name": "composition",
+        "mode": "grouped",
+        "source": {
+          "schema": "application",
+          "name": "numeric_distribution"
+        },
+        "projection": [
+          {
+            "kind": "numeric_bucket",
+            "field": "signed_value",
+            "alias": "signed_group",
+            "boundaries": [
+              "-9223372036854775809",
+              "-1.5",
+              "0",
+              "1.5",
+              "9007199254740993",
+              "9223372036854775808"
+            ]
+          },
+          {
+            "kind": "numeric_bucket",
+            "field": "decimal_value",
+            "alias": "decimal_group",
+            "boundaries": [
+              "-123.5",
+              "0",
+              "0.000000000000000000000000000001",
+              "1.5",
+              "9007199254740993",
+              "99999999999999999999999999999999999"
+            ]
+          },
+          {
+            "kind": "dimension",
+            "field": "category"
+          },
+          {
+            "kind": "time_bucket",
+            "field": "occurred_at",
+            "alias": "day",
+            "unit": "day",
+            "timezone": "UTC"
+          },
+          {
+            "kind": "measure",
+            "function": "count_all",
+            "alias": "total"
+          },
+          {
+            "kind": "measure",
+            "function": "count",
+            "field": "decimal_value",
+            "alias": "decimal_count"
+          },
+          {
+            "kind": "measure",
+            "function": "count_distinct",
+            "field": "decimal_value",
+            "alias": "decimal_count_distinct"
+          },
+          {
+            "kind": "measure",
+            "function": "min",
+            "field": "decimal_value",
+            "alias": "decimal_min"
+          },
+          {
+            "kind": "measure",
+            "function": "max",
+            "field": "decimal_value",
+            "alias": "decimal_max"
+          },
+          {
+            "kind": "measure",
+            "function": "sum",
+            "field": "decimal_value",
+            "alias": "decimal_sum"
+          },
+          {
+            "kind": "measure",
+            "function": "avg",
+            "field": "decimal_value",
+            "alias": "decimal_avg"
+          }
+        ],
+        "maximum_limit": 100,
+        "maximum_rows_examined_per_scan": 1000,
+        "allow_temporary_table": true,
+        "allow_filesort": true,
+        "order_by": [
+          {
+            "kind": "numeric_bucket",
+            "alias": "signed_group",
+            "direction": "asc"
+          },
+          {
+            "kind": "numeric_bucket",
+            "alias": "decimal_group",
+            "direction": "desc"
+          }
+        ],
+        "filter": {
+          "kind": "predicate",
+          "field": "id",
+          "operator": "gte",
+          "value_types": [
+            "integer"
+          ]
+        }
+      },
+      {
+        "name": "byte_prefix",
+        "mode": "grouped",
+        "source": {
+          "schema": "application",
+          "name": "numeric_distribution"
+        },
+        "projection": [
+          {
+            "kind": "numeric_bucket",
+            "field": "signed_value",
+            "alias": "signed_byte",
+            "boundaries": [
+              "-9223372036854775809",
+              "-1.5",
+              "0",
+              "1.5",
+              "9007199254740993",
+              "9223372036854775808"
+            ]
+          },
+          {
+            "kind": "dimension",
+            "field": "payload"
+          },
+          {
+            "kind": "measure",
+            "function": "count_all",
+            "alias": "total"
+          }
+        ],
+        "maximum_limit": 100,
+        "maximum_rows_examined_per_scan": 1000,
+        "allow_temporary_table": true,
+        "allow_filesort": true,
+        "order_by": [
+          {
+            "kind": "numeric_bucket",
+            "alias": "signed_byte",
+            "direction": "asc"
+          }
+        ]
+      },
+      {
+        "name": "work_denied",
+        "mode": "grouped",
+        "source": {
+          "schema": "application",
+          "name": "numeric_distribution"
+        },
+        "projection": [
+          {
+            "kind": "numeric_bucket",
+            "field": "signed_value",
+            "alias": "denied_bucket",
+            "boundaries": [
+              "-9223372036854775809",
+              "-1.5",
+              "0",
+              "1.5",
+              "9007199254740993",
+              "9223372036854775808"
+            ]
+          },
+          {
+            "kind": "measure",
+            "function": "count_all",
+            "alias": "total"
+          }
+        ],
+        "maximum_limit": 100,
+        "maximum_rows_examined_per_scan": 1000,
+        "allow_temporary_table": false,
+        "allow_filesort": false,
+        "order_by": [
+          {
+            "kind": "numeric_bucket",
+            "alias": "denied_bucket",
+            "direction": "asc"
+          }
+        ]
+      },
+      {
+        "name": "estimate_denied",
+        "mode": "grouped",
+        "source": {
+          "schema": "application",
+          "name": "numeric_distribution"
+        },
+        "projection": [
+          {
+            "kind": "numeric_bucket",
+            "field": "signed_value",
+            "alias": "estimate_bucket",
+            "boundaries": [
+              "-9223372036854775809",
+              "-1.5",
+              "0",
+              "1.5",
+              "9007199254740993",
+              "9223372036854775808"
+            ]
+          },
+          {
+            "kind": "measure",
+            "function": "count_all",
+            "alias": "total"
+          }
+        ],
+        "maximum_limit": 100,
+        "maximum_rows_examined_per_scan": 1,
+        "allow_temporary_table": true,
+        "allow_filesort": true
+      },
+      {
+        "name": "index_denied",
+        "mode": "grouped",
+        "source": {
+          "schema": "application",
+          "name": "numeric_distribution"
+        },
+        "projection": [
+          {
+            "kind": "numeric_bucket",
+            "field": "signed_value",
+            "alias": "index_bucket",
+            "boundaries": [
+              "-9223372036854775809",
+              "-1.5",
+              "0",
+              "1.5",
+              "9007199254740993",
+              "9223372036854775808"
+            ]
+          },
+          {
+            "kind": "measure",
+            "function": "count_all",
+            "alias": "total"
+          }
+        ],
+        "maximum_limit": 100,
+        "maximum_rows_examined_per_scan": 1000,
+        "allow_temporary_table": true,
+        "allow_filesort": true,
+        "required_index": "missing_index"
+      }
+    ]
+  },
+  "limits": {
+    "deadline_ms": 3000,
+    "max_request_bytes": 65536,
+    "max_projection_fields": 20,
+    "max_group_by_fields": 4,
+    "max_order_by_fields": 10,
+    "max_predicates": 50,
+    "max_expression_depth": 8,
+    "max_parameters": 200,
+    "max_rows": 100,
+    "max_result_bytes": 1048576,
+    "max_offset": 0,
+    "max_concurrency": 1
+  }
+}

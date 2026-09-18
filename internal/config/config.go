@@ -162,6 +162,7 @@ type AggregateShapeSource struct {
 }
 
 type AggregateShapeOutput struct {
+	Boundaries     []string                 `yaml:"boundaries"`
 	Representation queryspec.Representation `yaml:"representation"`
 	Kind           string                   `yaml:"kind"`
 	Field          string                   `yaml:"field"`
@@ -303,12 +304,12 @@ func validatePolicyYAMLNode(node *yaml.Node, path string, active map[*yaml.Node]
 			return fmt.Errorf("%s.maximum_limit must be omitted in scalar mode", path)
 		}
 		if aggregateShape {
-			hasTimeBucket, err := aggregateShapeYAMLHasTimeBucket(node, path)
+			hasBucket, err := aggregateShapeYAMLHasBucket(node, path)
 			if err != nil {
 				return err
 			}
-			if hasTimeBucket && (!hasAllowTemporaryTable || !hasAllowFilesort) {
-				return fmt.Errorf("%s time_bucket shape requires allow_temporary_table and allow_filesort", path)
+			if hasBucket && (!hasAllowTemporaryTable || !hasAllowFilesort) {
+				return fmt.Errorf("%s time_bucket shape requires allow_temporary_table and allow_filesort (also required for numeric_bucket)", path)
 			}
 		}
 	case yaml.SequenceNode:
@@ -370,7 +371,7 @@ func isQueryShapeStringPolicyPath(path string) bool {
 	if separator := strings.LastIndexByte(path, '.'); separator >= 0 {
 		segment = path[separator+1:]
 	}
-	if strings.HasPrefix(segment, "value_types[") && strings.HasSuffix(segment, "]") {
+	if (strings.HasPrefix(segment, "value_types[") || strings.HasPrefix(segment, "boundaries[")) && strings.HasSuffix(segment, "]") {
 		return true
 	}
 	switch segment {
@@ -381,7 +382,7 @@ func isQueryShapeStringPolicyPath(path string) bool {
 	}
 }
 
-func aggregateShapeYAMLHasTimeBucket(node *yaml.Node, path string) (bool, error) {
+func aggregateShapeYAMLHasBucket(node *yaml.Node, path string) (bool, error) {
 	for index := 0; index+1 < len(node.Content); index += 2 {
 		if node.Content[index].Value != "projection" {
 			continue
@@ -411,7 +412,7 @@ func aggregateShapeYAMLHasTimeBucket(node *yaml.Node, path string) (bool, error)
 				if err != nil {
 					return false, err
 				}
-				if kind.Kind == yaml.ScalarNode && kind.Tag == "!!str" && kind.Value == "time_bucket" {
+				if kind.Kind == yaml.ScalarNode && kind.Tag == "!!str" && (kind.Value == "time_bucket" || kind.Value == "numeric_bucket") {
 					return true, nil
 				}
 			}
@@ -786,10 +787,14 @@ func validateAggregateShapes(profile string, policy QueryPolicy, limits domain.L
 		dimensionFields := make(map[string]queryspec.Representation)
 		measureAliases := make(map[string]struct{})
 		timeBucketAliases := make(map[string]struct{})
+		numericBucketAliases := make(map[string]int)
 		timeBucketFields := make(map[string]struct{})
 		for outputIndex, output := range shape.Projection {
 			outputPath := fmt.Sprintf("%s.projection[%d]", path, outputIndex)
 			outputName := ""
+			if output.Kind != "numeric_bucket" && output.Boundaries != nil {
+				return fmt.Errorf("%s boundaries require numeric_bucket", outputPath)
+			}
 			switch output.Kind {
 			case "dimension":
 				dimensions++
@@ -799,6 +804,18 @@ func validateAggregateShapes(profile string, policy QueryPolicy, limits domain.L
 				}
 				outputName = strings.ToLower(output.Field)
 				dimensionFields[outputName] = output.Representation
+			case "numeric_bucket":
+				dimensions++
+				if shape.Mode != queryspec.AggregateModeGrouped || !validPortableIdentifier(output.Field) || !validPortableIdentifier(output.Alias) || output.Function != "" || output.Unit != "" || output.Timezone != "" || output.Representation != "" {
+					return fmt.Errorf("%s must contain a valid grouped numeric bucket", outputPath)
+				}
+				boundaries, err := queryspec.NormalizeNumericBoundaries(output.Boundaries)
+				if err != nil {
+					return fmt.Errorf("%s invalid numeric bucket boundaries", outputPath)
+				}
+				shape.Projection[outputIndex].Boundaries = boundaries
+				outputName = strings.ToLower(output.Alias)
+				numericBucketAliases[outputName] = len(boundaries)
 			case "time_bucket":
 				dimensions++
 				if shape.Mode != queryspec.AggregateModeGrouped || !validPortableIdentifier(output.Field) ||
@@ -841,8 +858,8 @@ func validateAggregateShapes(profile string, policy QueryPolicy, limits domain.L
 			}
 			outputNames[outputName] = struct{}{}
 		}
-		if len(timeBucketAliases) != 0 && (shape.AllowTemporaryTable == nil || shape.AllowFilesort == nil) {
-			return fmt.Errorf("%s time_bucket shape requires allow_temporary_table and allow_filesort", path)
+		if (len(timeBucketAliases) != 0 || len(numericBucketAliases) != 0) && (shape.AllowTemporaryTable == nil || shape.AllowFilesort == nil) {
+			return fmt.Errorf("%s time_bucket shape requires allow_temporary_table and allow_filesort (also required for numeric_bucket)", path)
 		}
 		if shape.Mode == queryspec.AggregateModeScalar {
 			if dimensions != 0 || shape.OrderBy != nil || shape.MaximumLimit != 0 {
@@ -889,6 +906,14 @@ func validateAggregateShapes(profile string, policy QueryPolicy, limits domain.L
 				if _, projected := measureAliases[strings.ToLower(order.Alias)]; !projected {
 					return fmt.Errorf("%s.alias must reference a projected measure", orderPath)
 				}
+			} else if order.Kind == "numeric_bucket" {
+				if !validPortableIdentifier(order.Alias) || order.Field != "" || order.Representation != "" {
+					return fmt.Errorf("%s numeric_bucket order requires only alias", orderPath)
+				}
+				target = "numeric_bucket:" + strings.ToLower(order.Alias)
+				if _, projected := numericBucketAliases[strings.ToLower(order.Alias)]; !projected {
+					return fmt.Errorf("%s.alias must reference a projected numeric bucket", orderPath)
+				}
 			} else if order.Kind == "time_bucket" {
 				if !validPortableIdentifier(order.Alias) || order.Field != "" {
 					return fmt.Errorf("%s time_bucket order requires only alias", orderPath)
@@ -916,6 +941,16 @@ func validateAggregateShapes(profile string, policy QueryPolicy, limits domain.L
 			if err := validateAggregateShapeFilter(path+".filter", *shape.Filter, 1, limits, policy.AllowedFilterOperators, &stats); err != nil {
 				return err
 			}
+		}
+		bucketSpec := queryspec.NormalizedAggregateSpec{Projection: make([]queryspec.AggregateOutput, len(shape.Projection)), OrderBy: make([]queryspec.AggregateSort, len(shape.OrderBy))}
+		for i, output := range shape.Projection {
+			bucketSpec.Projection[i] = queryspec.AggregateOutput{Kind: output.Kind, Alias: output.Alias}
+		}
+		for i, order := range shape.OrderBy {
+			bucketSpec.OrderBy[i] = queryspec.AggregateSort{Kind: order.Kind, Alias: order.Alias}
+		}
+		if _, err := queryspec.NumericBucketParameters(bucketSpec, numericBucketAliases, stats.parameters, limits.MaxParameters); err != nil {
+			return fmt.Errorf("%s exceeds the effective parameter limit", path)
 		}
 		if shape.RequiredIndex != "" && !validPortableIdentifier(shape.RequiredIndex) {
 			return fmt.Errorf("%s.required_index must be a portable identifier", path)

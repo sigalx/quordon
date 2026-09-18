@@ -275,9 +275,14 @@ func loadTableStatisticsContractValidator(t *testing.T) openapivalidator.Validat
 		t.Fatal(err)
 	}
 	configuration := datamodel.NewDocumentConfiguration()
+	// Preload every modular contract file before resolving circular file refs;
+	// lazy cross-file indexing in libopenapi can deadlock. Sequential extraction
+	// retains the complete schema checks with deterministic resolution.
+	configuration.ExtractRefsSequentially = true
 	configuration.BasePath = "../../openapi"
+	configuration.LocalFS = os.DirFS("../../openapi")
 	configuration.SpecFilePath = "table-statistics.yaml"
-	configuration.FileFilter = []string{"table-statistics.yaml", "openapi.yaml", "aggregate.yaml", "query-shapes.yaml"}
+	configuration.FileFilter = []string{"openapi.yaml", "aggregate.yaml", "query-shapes.yaml", "table-statistics.yaml", "keyset-pagination.yaml"}
 	configuration.AllowFileReferences = true
 	document, err := libopenapi.NewDocumentWithConfiguration(specification, configuration)
 	if err != nil {

@@ -1,0 +1,17 @@
+# Descriptor for an explicitly authorized aggregate profile; source metadata
+# and EXPLAIN admission must be verified against the target datasource.
+name: operations_by_duration
+mode: grouped
+source: {schema: application, name: operations}
+projection:
+  - kind: numeric_bucket
+    field: duration_ms
+    alias: duration_bucket
+    boundaries: ["0", "100", "500", "1000"]
+  - {kind: measure, function: count_all, alias: operations_count}
+order_by:
+  - {kind: numeric_bucket, alias: duration_bucket, direction: asc}
+maximum_limit: 20
+maximum_rows_examined_per_scan: 100000
+allow_temporary_table: true
+allow_filesort: true

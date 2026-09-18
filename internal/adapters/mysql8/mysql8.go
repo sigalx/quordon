@@ -38,7 +38,7 @@ func New() *Adapter { return &Adapter{} }
 func (*Adapter) Name() string { return domain.AdapterMySQL8 }
 
 func (*Adapter) Features() []domain.AdapterFeature {
-	return []domain.AdapterFeature{domain.FeatureTimeBucketUTC, domain.FeatureSourceText}
+	return []domain.AdapterFeature{domain.FeatureNumericBucketExact, domain.FeatureTimeBucketUTC, domain.FeatureSourceText}
 }
 
 func (*Adapter) Capabilities() []domain.Operation {

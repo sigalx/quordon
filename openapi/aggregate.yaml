@@ -76,6 +76,15 @@ paths:
 
   /queries/aggregate:
     post:
+      x-quordon-numeric-bucket:
+        cached-adapter-feature: numeric_bucket_exact
+        unsupported-feature: 501 CAPABILITY_NOT_IMPLEMENTED before datasource access
+        policy-boundaries: 1 to 64 fixed-point decimal strings, at most 128 ASCII bytes each
+        policy-canonicalization: trim fractional trailing zeros and negative zero; compare exactly
+        execution-controls: explicit allow_temporary_table and allow_filesort booleans
+        parameter-budget: all repeated projection, grouping and ordering boundary binds plus filter and LIMIT binds
+        request-signature: field and alias are included; policy boundaries are excluded
+
       operationId: executeAggregate
       summary: Execute a bounded aggregate query
       description: >-
@@ -624,23 +633,26 @@ components:
             $ref: "#/components/schemas/AggregateFilterExpression"
 
     AggregateOutput:
-      description: A grouped dimension, UTC time bucket, or aggregate measure output column.
+      description: A grouped dimension, UTC time bucket, exact numeric bucket, or aggregate measure output column.
       oneOf:
         - $ref: "#/components/schemas/AggregateDimension"
         - $ref: "#/components/schemas/TimeBucketDimension"
+        - $ref: "#/components/schemas/NumericBucketDimension"
         - $ref: "#/components/schemas/AggregateMeasure"
       discriminator:
         propertyName: kind
         mapping:
           dimension: "#/components/schemas/AggregateDimension"
           time_bucket: "#/components/schemas/TimeBucketDimension"
+          numeric_bucket: "#/components/schemas/NumericBucketDimension"
           measure: "#/components/schemas/AggregateMeasure"
 
     AggregateGroupingOutput:
-      description: An ordinary dimension or a server-generated UTC time bucket.
+      description: An ordinary dimension or a server-generated time or numeric bucket.
       oneOf:
         - $ref: "#/components/schemas/AggregateDimension"
         - $ref: "#/components/schemas/TimeBucketDimension"
+        - $ref: "#/components/schemas/NumericBucketDimension"
 
     AggregateDimension:
       description: A projected source field that also defines a GROUP BY term.
@@ -657,6 +669,36 @@ components:
           const: dimension
         field:
           $ref: "./openapi.yaml#/components/schemas/Identifier"
+
+    NumericBucketDimension:
+      description: >-
+        Policy-curated exact INTEGER or DECIMAL grouping; FLOAT/DOUBLE and other
+        source types produce semantic 422 UNSUPPORTED_QUERY. With N strictly
+        increasing policy boundaries, index 0 is below the first boundary,
+        index i represents [boundary[i-1], boundary[i]), and N starts at the
+        last boundary inclusively. Output type is integer with string encoding;
+        only source DB NULL produces null, and nullable follows source metadata.
+        Only nonempty groups are returned; empty input gives an empty grouped
+        result. Requests never contain boundaries. Boundaries may be fractional
+        for integer sources or lie outside the source range. Adapter precision
+        limits are checked before EXPLAIN and the main SELECT.
+      type: object
+      additionalProperties: false
+      required: [kind, field, alias]
+      properties:
+        kind: {type: string, const: numeric_bucket}
+        field: {$ref: "./openapi.yaml#/components/schemas/Identifier"}
+        alias: {$ref: "./openapi.yaml#/components/schemas/Identifier"}
+
+    NumericBucketOrder:
+      description: Numeric bucket index order; NULL comes first ascending and last descending. Without order_by the order is unspecified.
+      type: object
+      additionalProperties: false
+      required: [kind, alias, direction]
+      properties:
+        kind: {type: string, const: numeric_bucket}
+        alias: {$ref: "./openapi.yaml#/components/schemas/Identifier"}
+        direction: {type: string, enum: [asc, desc]}
 
     TimeBucketDimension:
       description: >-
@@ -764,12 +806,14 @@ components:
       oneOf:
         - $ref: "#/components/schemas/DimensionOrder"
         - $ref: "#/components/schemas/TimeBucketOrder"
+        - $ref: "#/components/schemas/NumericBucketOrder"
         - $ref: "#/components/schemas/MeasureOrder"
       discriminator:
         propertyName: kind
         mapping:
           dimension: "#/components/schemas/DimensionOrder"
           time_bucket: "#/components/schemas/TimeBucketOrder"
+          numeric_bucket: "#/components/schemas/NumericBucketOrder"
           measure: "#/components/schemas/MeasureOrder"
 
     DimensionOrder:

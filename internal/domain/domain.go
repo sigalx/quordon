@@ -12,11 +12,14 @@ const (
 type AdapterFeature string
 
 const (
-	FeatureTimeBucketUTC AdapterFeature = "time_bucket_utc"
-	FeatureSourceText    AdapterFeature = "source_text"
+	FeatureNumericBucketExact AdapterFeature = "numeric_bucket_exact"
+	FeatureTimeBucketUTC      AdapterFeature = "time_bucket_utc"
+	FeatureSourceText         AdapterFeature = "source_text"
 )
 
-func (f AdapterFeature) Valid() bool { return f == FeatureTimeBucketUTC || f == FeatureSourceText }
+func (f AdapterFeature) Valid() bool {
+	return f == FeatureNumericBucketExact || f == FeatureTimeBucketUTC || f == FeatureSourceText
+}
 
 type Operation string
 

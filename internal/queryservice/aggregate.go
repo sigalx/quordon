@@ -82,7 +82,8 @@ func (s *Service) Aggregate(
 	adapterName := s.databases.AdapterName(profile.Datasource)
 	if !slices.Contains(s.databases.Capabilities(profile.Datasource), domain.OperationAggregate) ||
 		queryspec.AggregateUsesTimeBucket(validated.Spec()) &&
-			!slices.Contains(s.databases.Features(profile.Datasource), domain.FeatureTimeBucketUTC) {
+			!slices.Contains(s.databases.Features(profile.Datasource), domain.FeatureTimeBucketUTC) ||
+		queryspec.AggregateUsesNumericBucket(validated.Spec()) && !slices.Contains(s.databases.Features(profile.Datasource), domain.FeatureNumericBucketExact) {
 		if err := s.writeAudit(context.WithoutCancel(ctx), audit.Event{
 			Type: "query_completion", RequestID: requestID, QueryID: queryID, Principal: principal,
 			ClientIdentifier: clientIdentifier, PolicyProfile: request.Profile,

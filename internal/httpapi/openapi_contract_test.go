@@ -339,7 +339,7 @@ func (*contractAdapter) Capabilities() []domain.Operation {
 	}
 }
 func (*contractAdapter) Features() []domain.AdapterFeature {
-	return []domain.AdapterFeature{domain.FeatureTimeBucketUTC}
+	return []domain.AdapterFeature{domain.FeatureTimeBucketUTC, domain.FeatureNumericBucketExact}
 }
 func (*contractAdapter) Validate(context.Context, *sql.DB) error { return nil }
 func (*contractAdapter) IdentifierSemantics(context.Context, *sql.DB) (domain.IdentifierSemantics, error) {
@@ -393,6 +393,15 @@ func (*contractAdapter) SelectKeyset(
 func (*contractAdapter) Aggregate(
 	_ context.Context, _ *sql.DB, authorized policy.AuthorizedAggregate, _ int,
 ) (database.AggregateResult, error) {
+	if queryspec.AggregateUsesNumericBucket(authorized.Query()) {
+		if authorized.Operation() != domain.OperationAggregate || len(authorized.NumericBoundaries()["id_bucket"]) != 4 {
+			panic("numeric bucket was not authorized")
+		}
+		bucket, total := "1", "2"
+		return database.AggregateResult{Mode: "grouped", Columns: []database.ResultColumn{
+			{Name: "id_bucket", Type: "integer", Encoding: "string", Nullable: true}, {Name: "bucket_count", Type: "integer", Encoding: "string", Nullable: false},
+		}, Rows: [][]*string{{nil, &total}, {&bucket, &total}}, RowCount: 2, ResultBytes: 256}, nil
+	}
 	if queryspec.AggregateUsesTimeBucket(authorized.Query()) {
 		bucket := "2026-09-01T00:00:00Z"
 		total := "1"
@@ -467,7 +476,7 @@ func successfulKeysetContractServer(t *testing.T) (*Server, *audit.MemorySink, f
 	return successfulContractServerWithOptions(t, false, true)
 }
 
-func successfulContractServerWithOptions(t *testing.T, withTimeBucket, withKeyset bool) (*Server, *audit.MemorySink, func()) {
+func successfulContractServerWithOptions(t *testing.T, withTimeBucket, withKeyset bool, numeric ...bool) (*Server, *audit.MemorySink, func()) {
 	t.Helper()
 	hash, err := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.DefaultCost)
 	if err != nil {
@@ -579,6 +588,17 @@ func successfulContractServerWithOptions(t *testing.T, withTimeBucket, withKeyse
 			},
 		}
 		cfg.Profiles["reader"] = profile
+	}
+	if len(numeric) != 0 && numeric[0] {
+		p := cfg.Profiles["reader"]
+		p.Query.AllowSorting = true
+		p.Query.AggregateShapes = append(p.Query.AggregateShapes, config.AggregateShape{
+			Name: "orders_by_numeric", Mode: "grouped", Source: config.AggregateShapeSource{Schema: "app", Name: "orders"},
+			Projection: []config.AggregateShapeOutput{{Kind: "numeric_bucket", Field: "id", Alias: "id_bucket", Boundaries: []string{"0", "100", "500", "1000"}}, {Kind: "measure", Function: "count_all", Alias: "bucket_count"}},
+			OrderBy:    []config.AggregateShapeOrder{{Kind: "numeric_bucket", Alias: "id_bucket", Direction: "asc"}}, MaximumLimit: 10, MaximumRowsExaminedPerScan: 100,
+			AllowTemporaryTable: boolPointer(true), AllowFilesort: boolPointer(true),
+		})
+		cfg.Profiles["reader"] = p
 	}
 	resolver := secrets.Map{"env:PASSWORD_HASH": string(hash)}
 	authenticator, authProblems := auth.NewBasic(cfg.Authentication.Basic, resolver)
@@ -716,9 +736,14 @@ func loadOpenAPI31Validator(t *testing.T) openapivalidator.Validator {
 		t.Fatal(err)
 	}
 	configuration := datamodel.NewDocumentConfiguration()
+	// Preload every modular contract file before resolving circular file refs;
+	// lazy cross-file indexing in libopenapi can deadlock. Sequential extraction
+	// retains the complete schema checks with deterministic resolution.
+	configuration.ExtractRefsSequentially = true
 	configuration.BasePath = "../../openapi"
+	configuration.LocalFS = os.DirFS("../../openapi")
 	configuration.SpecFilePath = "openapi.yaml"
-	configuration.FileFilter = []string{"openapi.yaml", "aggregate.yaml", "query-shapes.yaml", "table-statistics.yaml"}
+	configuration.FileFilter = []string{"openapi.yaml", "aggregate.yaml", "query-shapes.yaml", "table-statistics.yaml", "keyset-pagination.yaml"}
 	configuration.AllowFileReferences = true
 	document, err := libopenapi.NewDocumentWithConfiguration(specification, configuration)
 	if err != nil {
