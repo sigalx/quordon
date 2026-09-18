@@ -353,6 +353,10 @@ temporal cursor не меняет eventual-consistency semantics keyset paginati
 
 ## Запланированные работы
 
+Локальные `$ref` и shallow `$override` реализованы для сборки policy в 0.1.3.
+Они переиспользуют готовые nodes/profiles; параметры и генерация keyset shapes
+остаются отдельной задачей ниже.
+
 ### P2. Позиционный `ENUM` в keyset cursor
 
 Составной PK с компонентом `ENUM` нельзя выдавать за набор `integer + string`:

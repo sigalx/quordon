@@ -69,6 +69,11 @@ archives:
         info:
           owner: root
           group: root
+      - src: third_party/go-yaml/QUORDON_PATCH.md
+        dst: third-party/go-yaml.md
+        info:
+          owner: root
+          group: root
       - src: third_party/licenses/filippo.io-edwards25519-BSD-3-Clause.txt
         dst: licenses/filippo.io-edwards25519-BSD-3-Clause.txt
         info:
@@ -135,6 +140,10 @@ nfpms:
           mode: 0644
       - src: third_party/go-sql-driver/mysql/QUORDON_PATCH.md
         dst: /usr/share/doc/quordon/third-party/go-sql-driver-mysql.md
+        file_info:
+          mode: 0644
+      - src: third_party/go-yaml/QUORDON_PATCH.md
+        dst: /usr/share/doc/quordon/third-party/go-yaml.md
         file_info:
           mode: 0644
       - src: third_party/NOTICE.md

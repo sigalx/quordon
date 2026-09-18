@@ -252,6 +252,21 @@ amplification внутри одного корректно аутентифиц�
 
 ## Конфигурация и DBMS adapters
 
+- Файловая policy загружается через `config.LoadFile`; inline `Load` не открывает
+  внешние refs. `$ref` заменяет узел целиком, optional `$override` заменяет только
+  непосредственные поля mapping. Полная база разрешается до override.
+- YAML descriptors — regular files ровно `0600`; ссылки ограничены каталогом
+  основной policy через `os.Root`. URI/path/pointer validation предшествует
+  открытию цели. Duplicate/non-string/merge keys и recursive aliases запрещены.
+- Сохранять фиксированные file/total/document/depth/ref/node/encoded budgets из
+  `internal/config/load.go`, включая промежуточное раскрытие overrides. Parser
+  bounds в `third_party/go-yaml` проверяются до выделения узлов.
+- `--check-config` выполняет сборку и общую validation без adapters, DB, HTTP и
+  resolvers. Diagnostic — code и numeric locations/chain; raw errors, filenames,
+  YAML keys/values и credentials не выводятся.
+- Fingerprint зависит от canonical redacted effective Config. Refs/overrides
+  сохраняют один datasource на profile. Генераторы shapes — отдельный backlog.
+
 - Config decode отклоняет unknown fields, неверные типы, отсутствующие required
   fields и явный `null`, где он не разрешён.
 - Presence-sensitive security options не моделировать обычным `bool`, если

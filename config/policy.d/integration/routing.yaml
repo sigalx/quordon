@@ -1,0 +1,53 @@
+datasource: integration-mysql
+operations: [select, explain_select, aggregate, select_keyset, list_query_shapes]
+resources:
+  schemas:
+    allow: [application]
+  objects:
+    allow: [application.routing_marker]
+  fields:
+    allow: [application.routing_marker.*]
+    deny: [application.routing_marker.hidden_value]
+query:
+  allow_filtering: false
+  allow_group_by: false
+  allow_sorting: true
+  allowed_filter_operators: []
+  allowed_aggregates: [count]
+  aggregate_shapes:
+    - name: marker_count
+      mode: scalar
+      source: {schema: application, name: routing_marker}
+      projection:
+        - kind: measure
+          function: count_all
+          alias: marker_count
+      required_index: PRIMARY
+      maximum_rows_examined_per_scan: 100
+  keyset_select_shapes:
+    - name: marker_page
+      source: {schema: application, name: routing_marker}
+      projection:
+        - kind: field
+          field: id
+        - kind: field
+          field: contour
+      order_by:
+        - field: id
+          direction: asc
+      maximum_limit: 10
+      required_index: PRIMARY
+      maximum_rows_examined_per_scan: 100
+limits:
+  deadline_ms: 3000
+  max_request_bytes: 65536
+  max_projection_fields: 10
+  max_group_by_fields: 1
+  max_order_by_fields: 10
+  max_predicates: 50
+  max_expression_depth: 8
+  max_parameters: 100
+  max_rows: 10
+  max_result_bytes: 1048576
+  max_offset: 0
+  max_concurrency: 1

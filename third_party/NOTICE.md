@@ -12,7 +12,8 @@ The corresponding complete notices are distributed in `licenses/`:
   modified source copy and describes those changes in
   `go-sql-driver-mysql.md`;
 - `golang.org/x/crypto` v0.55.0 — BSD 3-Clause;
-- `gopkg.in/yaml.v3` v3.0.1 — MIT and Apache-2.0.
+- `gopkg.in/yaml.v3` v3.0.1 — MIT and Apache-2.0; Quordon carries a modified
+  source copy with parser bounds described in `go-yaml.md`.
 
 Quordon itself is licensed under Apache-2.0. Its license is distributed as
 `LICENSE` in portable archives and documented by the Debian copyright file in

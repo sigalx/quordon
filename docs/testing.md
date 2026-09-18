@@ -1,5 +1,19 @@
 # Стратегия тестирования
 
+Policy assembly покрывает refs на каждом уровне, RFC 6901 pointers, shallow
+overrides, origin resolution, document cache, anchors/aliases и независимость
+typed profiles. Negative fixtures проверяют закрытую схему, types/presence,
+cycles, unsafe paths/symlinks, descriptor modes и каждый фиксированный budget.
+Parser limits и upstream YAML compatibility tests запускаются в `make test`.
+`--check-config` проверяется с отсутствующими secret dependencies и spy startup:
+внешние dependencies не запускаются при проверке и ранних отказах.
+
+`make integration` запускает два SELECT-only MySQL 8 datasource с различимыми
+`routing_marker` fixtures. Профили из общих refs должны выбирать правильный
+контур, сохранять denylist, aggregate/keyset plan admission и `503` для EXPLAIN
+views без `SHOW VIEW`. Исходная inline integration policy сохраняется для
+существующих unit/contract fixtures; runtime использует файловый refs wrapper.
+
 ## Цели
 
 Тесты доказывают не только успешность разрешённых операций, но и невозможность сформировать или выполнить SQL в обход strict request validation, policy engine и DBMS adapter.

@@ -4,6 +4,7 @@ ARG VERSION=dev
 WORKDIR /src
 COPY go.mod go.sum ./
 COPY third_party/go-sql-driver/mysql/go.mod ./third_party/go-sql-driver/mysql/go.mod
+COPY third_party/go-yaml/go.mod ./third_party/go-yaml/go.mod
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/quordon ./cmd/quordon

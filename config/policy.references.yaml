@@ -1,0 +1,25 @@
+# Install this and policy.example.yaml in the same directory with mode 0600.
+# Supply actual credential references before starting the service.
+$ref: './policy.example.yaml'
+$override:
+  principals:
+    readonly-client:
+      profiles: [query-explainer, data-reader, analytics, analytics-secondary]
+  datasources:
+    primary-mysql:
+      $ref: './policy.example.yaml#/datasources/primary-mysql'
+    secondary-mysql:
+      $ref: './policy.example.yaml#/datasources/primary-mysql'
+      $override:
+        dsn_secret_ref: file:/run/credentials/secondary-mysql-dsn
+  profiles:
+    query-explainer:
+      $ref: './policy.example.yaml#/profiles/query-explainer'
+    data-reader:
+      $ref: './policy.example.yaml#/profiles/data-reader'
+    analytics:
+      $ref: './policy.example.yaml#/profiles/analytics'
+    analytics-secondary:
+      $ref: './policy.example.yaml#/profiles/analytics'
+      $override:
+        datasource: secondary-mysql

@@ -29,3 +29,5 @@ require (
 )
 
 replace github.com/go-sql-driver/mysql => ./third_party/go-sql-driver/mysql
+
+replace gopkg.in/yaml.v3 => ./third_party/go-yaml

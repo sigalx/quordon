@@ -1,4 +1,5 @@
 .git
+rc-pass.txt
 .env*
 bin
 coverage
