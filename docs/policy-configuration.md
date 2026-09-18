@@ -86,8 +86,9 @@ anchors/aliases сохраняются и учитываются после ра
 сохраняются без coercion; explicit null запрещён. Native YAML integer/boolean
 spellings сохраняются; прежние canonical-decimal и literal-boolean rules shapes
 и `allow_source_text` продолжают действовать.
-Required fields, shape validations, resources и effective limits проверяются
-после сборки, до typed decode и runtime initialization.
+После сборки types и required/presence rules проверяются до typed decode.
+Затем semantic validation проверяет shapes, resources и effective limits;
+все эти проверки завершаются до runtime initialization.
 
 | Бюджет | Фиксированный предел |
 | --- | --- |
