@@ -1,0 +1,54 @@
+.TH QUORDON 1 "September 2026" "Quordon" "User Commands"
+.SH NAME
+quordon \- run the policy-enforcing infrastructure gateway
+.SH SYNOPSIS
+.B quordon
+.RI [ options ]
+.SH DESCRIPTION
+.B quordon
+provides local software agents with a strictly validated, policy-authorized,
+read-only HTTP API for infrastructure services.
+The current release supports MySQL 8.
+.PP
+The process refuses to start unless its policy is a regular file with mode
+0600. Database credentials, query values, SQL, and raw driver errors are not
+written to the audit stream.
+.SH OPTIONS
+.TP
+.BR \-c " " \fIPATH\fR, " " \-\-config " " \fIPATH\fR
+Read the policy configuration from
+.IR PATH .
+The default is the value of
+.B QUORDON_CONFIG
+or
+.BR config/policy.yaml .
+.TP
+.BR \-l " " \fIADDRESS\fR, " " \-\-listen " " \fIADDRESS\fR
+Override the
+.B server.listen
+address from the policy configuration.
+.B QUORDON_LISTEN
+provides the same override when the command-line option is absent.
+.TP
+.BR \-v , " " \-\-version
+Print the version and exit.
+.SH FILES
+.TP
+.I /etc/quordon/policy.yaml
+Default policy path used by the packaged systemd service.
+.TP
+.I /usr/share/doc/quordon/examples/policy.yaml
+Non-operational example policy. Copy and edit it before enabling the service.
+.SH SYSTEMD
+The Debian package installs
+.B quordon.service
+but does not enable or start it automatically.
+After installing a valid policy owned by the
+.B quordon
+user with mode 0600, run:
+.PP
+.EX
+systemctl enable --now quordon.service
+.EE
+.SH SEE ALSO
+Project documentation: https://github.com/sigalx/quordon

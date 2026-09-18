@@ -1,0 +1,1331 @@
+---
+openapi: 3.1.0
+info:
+  title: Quordon Table Statistics API Module
+  version: 1.5.0
+  description: >-
+    Executable contract module for policy-authorized table and partition
+    statistics. The root service contract in openapi.yaml references this path;
+    this module is validated bidirectionally against the runtime handler.
+
+x-quordon-status: runtime
+x-quordon-runtime-contract: true
+x-quordon-capability-contract:
+  operation: describe_object_statistics
+  owner: mysql8-adapter
+  advertised-by-current-runtime: true
+x-quordon-runtime-contract-fixtures:
+  successful-responses:
+    - unpartitioned-table
+    - partitioned-table
+    - subpartitioned-table
+    - nullable-unavailable-metrics
+    - maximum-uint64-string
+  schema-invalid-responses:
+    - metric-as-json-number
+    - metric-with-leading-zero-sign-fraction-or-exponent
+    - metric-above-uint64
+    - estimated-false-on-estimated-metric
+    - estimated-true-on-auto-increment
+    - missing-or-null-required-envelope-member
+    - unknown-or-case-folded-member
+    - partition-members-in-none-branch
+    - subpartition-members-in-partitioned-branch
+    - subpartitioned-hash-or-key-parent-method
+    - unpartitioned-non-innodb-table
+    - partitioned-or-subpartitioned-non-innodb-table
+    - duplicate-partition-or-subpartition-entry
+    - invalid-method-name-or-ordinal
+  raw-response-and-encoder-invariant-cases:
+    - duplicate-top-level-member-rejected-before-openapi-validation
+    - duplicate-nested-member-rejected-before-openapi-validation
+    - typed-encoder-emits-each-contract-member-exactly-once
+  semantic-and-security-cases:
+    - bodyless-get-with-absent-or-zero-content-length-is-accepted
+    - head-is-bodyless-405-with-stable-code-header
+    - unsupported-non-head-method-is-json-405
+    - positive-content-length-is-400-before-profile-resolution
+    - handler-visible-transfer-encoding-is-400-before-profile-resolution
+    - unsupported-transfer-coding-rejected-before-handler-is-outside-json-contract
+    - any-decoded-body-byte-is-400-before-profile-resolution
+    - invalid-path-or-profile-does-not-call-datasource
+    - unsupported-capability-does-not-call-datasource
+    - denied-resource-does-not-perform-resource-lookup
+    - missing-denied-non-innodb-and-non-table-return-identical-404
+    - view-statistics-return-422-unsupported-query
+    - case-insensitive-partition-name-collision-is-rejected
+    - invalid-unicode-metadata-name-is-rejected-as-upstream
+    - minimum-envelope-overflow-is-413-without-capacity-or-datasource-call
+    - incomplete-response-returns-413-and-never-truncates
+    - packet-cumulative-read-and-encoded-expansion-bounds
+    - timeout-unavailable-upstream-and-audit-failure-classification
+
+security:
+  - basicAuth: []
+
+servers:
+  - url: /
+    description: Current-process route without a version prefix.
+
+tags:
+  - name: Schemas
+    description: Policy-authorized physical schema metadata.
+
+paths:
+  /schemas/{schema}/objects/{object}/statistics:
+    x-quordon-method-contract:
+      allowed: [GET]
+      implicit-head:
+        forbidden: true
+        status: 405
+        stable-code: METHOD_NOT_ALLOWED
+        body: suppressed-by-go-net-http
+        error-code-header: X-Quordon-Error-Code
+        response: "#/components/responses/HeadMethodNotAllowed"
+      unsupported-non-head:
+        status: 405
+        code: METHOD_NOT_ALLOWED
+        before-authentication-and-audit: true
+        headers:
+          Allow: GET
+          Cache-Control: no-store
+        response: "#/components/responses/MethodNotAllowed"
+    get:
+      operationId: describeObjectStatistics
+      summary: Describe table and partition statistics
+      description: >-
+        Returns one complete, bounded observation of engine-maintained
+        statistics for a policy-authorized physical MySQL 8 InnoDB BASE TABLE. Values
+        such as row counts and allocated bytes are optimizer/storage-engine
+        estimates, not exact query results. Exact counts remain the
+        responsibility of a curated POST /queries/aggregate shape. The response
+        may include every physical partition and subpartition name and its
+        estimates. Granting this operation for a table therefore authorizes
+        disclosure of its complete partition layout; the first design has no
+        per-partition allow/deny rules. Raw partition expressions, boundary
+        values, comments, tablespaces, file paths, index names, SQL, and DDL are
+        never returned. This is an aggregate-confidentiality operation rather
+        than harmless schema discovery: partition estimates may disclose data
+        distribution, so describe_object permission does not imply this
+        capability. Metadata responses are never partial: if the complete
+        authorized response does not fit the effective result-byte budget, the
+        server returns 413 RESULT_TOO_LARGE.
+      x-quordon-status: runtime
+      x-quordon-capability: describe_object_statistics
+      x-quordon-confidentiality-scope: aggregate
+      x-quordon-strict-query-parameters: true
+      x-quordon-no-request-body:
+        openapi-request-body-member: absent
+        accepted-request:
+          handler-visible-transfer-encoding: absent
+          content-length: absent-or-zero
+          decoded-body: empty
+        runtime-enforcement:
+          order: after-authentication-and-before-profile-resolution
+          framing-checks-before-body-read:
+            - reject-any-handler-visible-transfer-encoding
+            - reject-positive-content-length
+          body-check:
+            maximum-decoded-bytes-read: 1
+            deadline: finite-request-read-deadline
+            required-result: immediate-eof
+          cleanup: bounded-body-close
+        rejection:
+          status: 400
+          code: INVALID_REQUEST
+          message: The request is invalid
+          datasource-call: false
+          profile-resolution: false
+          audit-records-request-body: false
+        pre-handler-transport-rejections:
+          owner: go-net-http-server
+          examples:
+            - unsupported-transfer-coding
+            - malformed-or-conflicting-content-length
+          application-handler-invoked: false
+          authentication-audit-or-datasource-call: false
+          quordon-json-status-body-and-headers: not-promised
+          reason: >-
+            The HTTP stack rejects these requests before Quordon can create a
+            request ID, authenticate, or apply the operation error contract.
+      x-quordon-processing-order:
+        - validate-exact-method-and-path
+        - authenticate-http-basic-credentials
+        - reject-handler-visible-request-body-framing-and-detect-at-most-one-body-byte
+        - require-valid-utf8-path-and-query-parameter-bytes
+        - validate-portable-schema-and-object-coordinates
+        - parse-a-closed-query-parameter-set
+        - require-exactly-one-valid-utf8-nonempty-profile
+        - resolve-principal-profile-assignment-and-effective-limits
+        - check-cached-adapter-capability-before-any-datasource-call
+        - obtain-identifier-semantics-without-resolving-the-requested-resource
+        - authorize-the-operation-and-resource-and-mint-an-operation-bound-token
+        - write-mandatory-allow-decision-audit
+        - preflight-minimum-contract-envelope-size-without-json-materialization
+        - acquire-global-and-profile-capacity
+        - invoke-manager-with-only-the-operation-bound-token
+        - acquire-one-physical-connection-with-bounded-deadlines
+        - validate-the-token-bound-physical-base-table-before-reading-statistics
+        - read-only-the-allowlisted-metadata-and-charge-budget-incrementally
+        - validate-and-size-the-exact-complete-contract-response-before-materialization
+        - write-mandatory-completion-audit
+        - send-the-response-only-after-successful-completion-audit
+      x-quordon-validation-boundary:
+        before-capability-check:
+          - exact-get-method
+          - no-handler-visible-request-body-framing-or-decoded-bytes
+          - portable-schema-and-object-identifiers
+          - closed-query-parameter-set
+          - exactly-one-profile-parameter
+          - nonempty-valid-utf8-profile
+        before-identifier-semantics-call:
+          - authenticated-principal
+          - assigned-profile
+          - configured-describe-object-statistics-operation
+          - effective-limits
+          - cached-adapter-capability
+        before-resource-lookup:
+          - resource-policy-authorization
+          - operation-bound-token
+          - mandatory-allow-audit
+          - execution-capacity
+        invalid-input-datasource-call: forbidden
+        unsupported-capability-datasource-call: forbidden
+        denied-resource-lookup: forbidden
+      x-quordon-authorization-token:
+        type: AuthorizedObjectStatistics
+        opaque-and-immutable: true
+        minted-only-by-policy-package: true
+        reusable-for-other-operations: false
+        binds:
+          - principal
+          - credential-identifier
+          - profile
+          - policy-version-and-redacted-policy-hash
+          - operation-describe-object-statistics
+          - datasource
+          - adapter
+          - canonical-schema-and-object
+          - identifier-semantics-and-generation
+          - effective-deadline
+          - effective-max-result-bytes
+        manager-and-adapter-input: authorized-token-only
+        mutable-aliases: forbidden
+      x-quordon-resource-semantics:
+        supported-object-kind: physical-innodb-base-table
+        views: unsupported-statistics-422-UNSUPPORTED_QUERY
+        non-innodb-base-tables: forbidden
+        missing-denied-non-innodb-or-non-table-equivalence:
+          status: 404
+          code: NOT_FOUND
+          message: The requested resource was not found
+        mysql-metadata-comparison:
+          case-behavior: follow-verified-server-identifier-semantics
+          accent-behavior: always-sensitive
+          actual-schema-and-object-must-match-token: true
+        one-datasource-endpoint-requires-homogeneous-identifier-semantics: true
+        operation-grant-discloses:
+          - table-engine-name
+          - complete-table-level-statistics-set
+          - complete-partition-and-subpartition-name-set
+          - complete-partition-level-statistics-set
+        per-partition-policy: not-supported-in-this-design
+      x-quordon-dbms-observation:
+        adapter: mysql8
+        product-range: ">= 8.0 and < 9.0"
+        supported-engine: InnoDB
+        other-engines: forbidden-because-table-rows-may-be-exact-or-have-different-semantics
+        ndb-cluster: not-supported
+        one-physical-connection: required
+        dml-snapshot: not-provided
+        metadata-sources:
+          allowed:
+            - INFORMATION_SCHEMA.TABLES
+            - INFORMATION_SCHEMA.PARTITIONS
+          mysql-system-schema-tables: forbidden
+          select-star: forbidden
+          select-only-explicit-allowlisted-columns: true
+        observation-semantics: >-
+          Storage-engine statistics may change asynchronously and metadata rows
+          need not represent one transactional DML snapshot. observed_at is the
+          gateway UTC time after all metadata has been read and validated; it
+          is not a database snapshot timestamp.
+        allowlisted-metadata-only:
+          - engine-name
+          - table-row-estimate
+          - table-data-bytes-estimate
+          - table-index-bytes-estimate
+          - observed-auto-increment-value
+          - partition-and-subpartition-names-and-ordinals
+          - portable-partition-methods
+          - partition-row-and-byte-estimates
+        forbidden-metadata:
+          - partition-expression
+          - partition-description-or-boundary-values
+          - table-or-partition-comment
+          - tablespace-or-file-path
+          - index-name-or-definition
+          - raw-create-statement
+          - raw-sql-or-driver-error
+        partition-method-mapping:
+          HASH: hash
+          LINEAR HASH: linear_hash
+          KEY: key
+          LINEAR KEY: linear_key
+          RANGE: range
+          RANGE COLUMNS: range_columns
+          LIST: list
+          LIST COLUMNS: list_columns
+          unknown-or-null-for-partitioned-table: upstream-error
+        cross-metric-validation:
+          table-values-are-not-derived-from-partition-values: true
+          table-and-partition-estimates-need-not-sum-or-match: true
+        information-schema-row-shape:
+          every-branch-requires-innodb-before-statistics-read: true
+          unpartitioned:
+            exactly-one-partitions-row: true
+            partition-name-method-and-subpartition-members: sql-null
+          partitioned:
+            every-row-has-nonnull-partition-name-method-and-ordinal: true
+            subpartition-members: sql-null
+          subpartitioned:
+            every-row-has-nonnull-partition-and-subpartition-members: true
+          actual-table-schema-and-name-match-authorization-token: required
+          missing-duplicate-or-mixed-branch-rows: upstream-error
+      x-quordon-metric-semantics:
+        integer-wire-representation: canonical-unsigned-base10-string
+        json-number-for-metric: forbidden
+        floating-point-conversion: forbidden
+        negative-noncanonical-or-overflowing-source-value: upstream-error
+        sql-null-representation: json-null
+        null-means: source-did-not-reliably-report-or-value-is-not-applicable
+        zero-is-never-used-for-unavailable: true
+        estimated-fields:
+          - estimated_rows
+          - data_bytes
+          - index_bytes
+        estimated-object-requires-estimated-true: true
+        auto-increment:
+          estimated: false
+          meaning: observed-engine-value-not-a-guaranteed-next-inserted-id
+      x-quordon-partition-semantics:
+        unpartitioned-table:
+          kind: none
+          partition-array: forbidden
+        partitioned-without-subpartitions:
+          kind: partitioned
+          complete-partitions-array: required
+        subpartitioned:
+          kind: subpartitioned
+          complete-partition-groups-and-subpartitions: required
+          parent-partition-estimates: omitted
+          leaf-subpartition-estimates: required-but-nullable-per-metric
+        ordering:
+          partitions: ascending-partition-ordinal
+          subpartitions: ascending-subpartition-ordinal-within-parent
+        semantic-validation:
+          - names-valid-utf8-and-control-free
+          - names-unique-under-mysql-case-insensitive-partition-identifier-semantics
+          - partition-name-semantics-independent-of-lower-case-table-names
+          - no-information-schema-collation-based-partition-name-lookup
+          - ordinals-unique-contiguous-and-start-at-one
+          - no-duplicate-or-missing-metadata-row
+          - total-leaf-partitions-and-subpartitions-at-most-8192
+          - method-compatible-with-partitioning-branch
+        inconsistent-or-unknown-server-metadata:
+          status: 502
+          code: UPSTREAM_ERROR
+      x-quordon-disclosure-boundary:
+        response-never-contains:
+          - sql-or-sql-fragments
+          - credentials-dsn-or-endpoints
+          - raw-driver-errors
+          - partition-expressions-boundaries-or-descriptions
+          - table-or-partition-comments
+          - tablespaces-file-paths-or-node-groups
+          - indexes-columns-or-field-names
+          - exact-row-counts
+        response-cache-control: no-store
+      x-quordon-profile-denial-equivalence:
+        cases:
+          - profile-does-not-exist
+          - profile-is-not-assigned-to-principal
+          - profile-does-not-configure-describe-object-statistics
+        status: 403
+        code: DENIED_OPERATION
+        message: The operation is not allowed by policy
+        policy-version-presence: identical-for-all-cases
+        requested-schema-object-datasource-adapter: forbidden
+        datasource-call: false
+      x-quordon-response-budget:
+        effective-limit: minimum-of-hard-and-profile-max-result-bytes
+        absolute-adapter-total-materialization-limit-bytes: 16777216
+        maximum-leaf-partitions-and-subpartitions: 8192
+        partial-response: forbidden
+        truncation-field: forbidden
+        denied-resource-metadata-is-never-read: true
+        size-includes:
+          - complete-envelope
+          - all-json-syntax
+          - escaped-identifiers-and-engine-name
+          - all-table-and-partition-metrics
+        fixed-envelope-preflight:
+          order: after-token-and-allow-audit-before-capacity-manager-or-datasource-access
+          json-materialization: forbidden
+          calculation: exact-known-envelope-plus-conservative-lower-bound-for-unresolved-members
+          rejection-condition: lower-bound-strictly-exceeds-effective-limit
+          false-positive-rejection-of-fitting-response: forbidden
+          reserves:
+            - all-known-envelope-members-and-json-syntax
+            - encoded-canonical-resource-and-policy-identifiers
+            - minimum-valid-partitioning-discriminator-envelope
+          failure:
+            status: 413
+            code: RESULT_TOO_LARGE
+            capacity-acquisition: false
+            manager-call: false
+            datasource-call: false
+            statistics-read: false
+            completion-audit-after-allow-decision: required
+        incremental-statistics-accounting:
+          required: true
+          charge-before:
+            - retaining-table-metric-scalar
+            - appending-partition-or-subpartition-entry
+            - materializing-escaped-metadata-name
+            - growing-response-slice
+          newly-discovered-branch-syntax-and-values: charged-before-retention
+          overflow:
+            status: 413
+            code: RESULT_TOO_LARGE
+            partial-response: forbidden
+          final-exact-size-validation: required-before-json-materialization
+        encoded-size-checked-before-large-json-materialization: true
+        raw-metadata-read-bounds:
+          individual-packet-bounded-before-payload-allocation: true
+          cumulative-selected-column-bytes-bounded-before-slice-growth: true
+          partition-count-bounded-before-append: true
+          forbidden-columns-never-scanned-or-materialized: true
+        fixed-envelope-or-complete-response-does-not-fit:
+          status: 413
+          code: RESULT_TOO_LARGE
+      x-quordon-response-encoding:
+        closed-typed-response-model: required
+        generic-maps-or-any-values: forbidden
+        each-contract-member-emitted-exactly-once: required
+        duplicate-json-member-defense:
+          json-schema-alone-is-sufficient: false
+          strict-raw-token-scan-before-openapi-validation: required-in-contract-tests
+          production-encoder-invariant-test: required
+          duplicate-top-level-or-nested-member: test-failure
+      x-quordon-deadline-and-cleanup:
+        one-effective-operation-deadline-covers:
+          - identifier-semantics-probe
+          - physical-connection-acquisition
+          - base-table-validation
+          - every-metadata-read
+        socket-read-and-write-deadlines-never-exceed-operation-deadline: true
+        rows-close-and-connection-release:
+          bounded: true
+          unread-result-drain-after-deadline: forbidden
+      x-quordon-audit:
+        mandatory: true
+        fail-closed: true
+        denial-detached-from-request-cancellation: true
+        completion-detached-from-request-cancellation: true
+        common-records:
+          - request-id
+          - principal
+          - credential-identifier
+          - operation
+          - policy-version
+          - redacted-policy-hash
+        pre-token-records-requested-resource: false
+        profile-denial:
+          event: operation_decision
+          decision: deny
+          reason-code: DENIED_OPERATION
+          records-requested-profile-raw: false
+          records-requested-schema-or-object: false
+        resource-denial:
+          event: operation_decision
+          decision: deny
+          reason-code: DENIED_RESOURCE
+          resulting-http-status: 404
+          records-requested-schema-or-object: false
+        unsupported-cached-capability:
+          event: operation_completion
+          outcome: not_implemented
+          error-kind: omitted
+          records: [profile, datasource, adapter]
+          records-requested-schema-or-object: false
+          datasource-call: false
+        identifier-semantics-failure:
+          event: operation_completion
+          outcome: error
+          error-kind: classified-as-timeout-unavailable-or-upstream
+          records: [profile, datasource, adapter]
+          records-requested-schema-or-object: false
+        post-token-records:
+          - profile
+          - datasource
+          - adapter
+          - canonical-authorized-schema-and-object
+        completion-records:
+          - outcome
+          - duration-ms-including-zero
+          - response-bytes-when-known
+          - stable-error-classification-on-failure
+          - partition-count-and-subpartition-count-on-success
+        never-records:
+          - metric-values
+          - partition-or-subpartition-names
+          - raw-metadata-or-driver-errors
+        capacity-failure-after-allow-decision-requires-completion: true
+        completion-write-failure:
+          successful-http-response: forbidden
+          status: 503
+          code: SERVICE_UNAVAILABLE
+        bounded-write-timeout: required
+        maximum-event-size-bytes: 16777216
+        maximum-event-size-preflight-before-listener-startup: true
+        maximum-event-size-preflight-covers:
+          - method-independent-authentication-identities
+          - profile-denial-for-every-configured-basic-credential
+          - unsupported-capability-and-identifier-semantics-completions
+          - resource-denial-without-requested-resource-identifiers
+          - post-token-allow-and-every-completion-with-one-canonical-resource
+        preflight-materializes-complete-json: false
+      x-quordon-required-response-headers:
+        X-Request-ID: server-generated-nonempty-value
+        Cache-Control: no-store
+      x-quordon-error-contract:
+        "400": [INVALID_REQUEST]
+        "401": [AUTHENTICATION_REQUIRED, INVALID_CREDENTIALS]
+        "403": [DENIED_OPERATION]
+        "404": [NOT_FOUND]
+        "405": [METHOD_NOT_ALLOWED]
+        "413": [RESULT_TOO_LARGE]
+        "500": [INTERNAL_ERROR]
+        "501": [CAPABILITY_NOT_IMPLEMENTED]
+        "502": [UPSTREAM_ERROR]
+        "503": [CAPACITY_EXCEEDED, SERVICE_UNAVAILABLE, DATABASE_UNAVAILABLE]
+        "504": [QUERY_TIMEOUT]
+      tags: [Schemas]
+      parameters:
+        - $ref: "#/components/parameters/SchemaName"
+        - $ref: "#/components/parameters/ObjectName"
+        - $ref: "#/components/parameters/Profile"
+      responses:
+        "200":
+          description: Complete authorized table and partition statistics observation.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequiredRequestId"
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TableStatisticsResult"
+              examples:
+                partitioned:
+                  summary: A RANGE-partitioned table
+                  value:
+                    policy_profile: production-observer
+                    policy_version: "4"
+                    datasource: production-mysql
+                    adapter: mysql8
+                    schema: application
+                    name: orders
+                    observed_at: "2026-09-01T12:30:45.123456789Z"
+                    engine: InnoDB
+                    table:
+                      estimated_rows: {value: "152340", estimated: true}
+                      data_bytes: {value: "33554432", estimated: true}
+                      index_bytes: {value: "16777216", estimated: true}
+                      auto_increment: {value: "152901", estimated: false}
+                    partitioning:
+                      kind: partitioned
+                      method: range
+                      partitions:
+                        - name: p2025
+                          ordinal: 1
+                          statistics:
+                            estimated_rows: {value: "148000", estimated: true}
+                            data_bytes: {value: "31457280", estimated: true}
+                            index_bytes: {value: "15728640", estimated: true}
+                        - name: pmax
+                          ordinal: 2
+                          statistics:
+                            estimated_rows: {value: "4340", estimated: true}
+                            data_bytes: {value: "2097152", estimated: true}
+                            index_bytes: {value: "1048576", estimated: true}
+                subpartitioned:
+                  summary: A table partitioned by RANGE and subpartitioned by HASH
+                  value:
+                    policy_profile: production-observer
+                    policy_version: "4"
+                    datasource: production-mysql
+                    adapter: mysql8
+                    schema: application
+                    name: events
+                    observed_at: "2026-09-01T12:30:45Z"
+                    engine: InnoDB
+                    table:
+                      estimated_rows: {value: "20000", estimated: true}
+                      data_bytes: {value: "8388608", estimated: true}
+                      index_bytes: {value: "4194304", estimated: true}
+                      auto_increment: null
+                    partitioning:
+                      kind: subpartitioned
+                      method: range
+                      subpartition_method: hash
+                      partitions:
+                        - name: p2026
+                          ordinal: 1
+                          subpartitions:
+                            - name: p2026s0
+                              ordinal: 1
+                              statistics:
+                                estimated_rows: {value: "9900", estimated: true}
+                                data_bytes: {value: "4194304", estimated: true}
+                                index_bytes: {value: "2097152", estimated: true}
+                            - name: p2026s1
+                              ordinal: 2
+                              statistics:
+                                estimated_rows: {value: "10100", estimated: true}
+                                data_bytes: {value: "4194304", estimated: true}
+                                index_bytes: {value: "2097152", estimated: true}
+                unpartitioned:
+                  summary: An unpartitioned table with unavailable estimates
+                  value:
+                    policy_profile: production-observer
+                    policy_version: "4"
+                    datasource: production-mysql
+                    adapter: mysql8
+                    schema: application
+                    name: employees
+                    observed_at: "2026-09-01T12:30:45Z"
+                    engine: InnoDB
+                    table:
+                      estimated_rows: null
+                      data_bytes: null
+                      index_bytes: null
+                      auto_increment: null
+                    partitioning:
+                      kind: none
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/DeniedOperation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/ResultTooLarge"
+        "422":
+          $ref: "#/components/responses/UnsupportedQuery"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/CapabilityNotImplemented"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+      description: HTTP Basic Auth on every application request.
+
+  parameters:
+    SchemaName:
+      name: schema
+      in: path
+      required: true
+      description: Portable logical schema identifier.
+      schema:
+        $ref: "#/components/schemas/Identifier"
+
+    ObjectName:
+      name: object
+      in: path
+      required: true
+      description: Portable physical base-table identifier.
+      schema:
+        $ref: "#/components/schemas/Identifier"
+
+    Profile:
+      name: profile
+      in: query
+      required: true
+      description: >-
+        Assigned server-side profile. It must occur exactly once. Additional or
+        repeated query parameters and invalid UTF-8 are rejected with 400
+        INVALID_REQUEST by the strict query-string semantic.
+      schema:
+        type: string
+        minLength: 1
+
+  headers:
+    RequiredRequestId:
+      description: Server-generated nonempty request correlation identifier.
+      required: true
+      schema:
+        type: string
+        minLength: 1
+
+    NoStore:
+      description: The response must not be stored by clients or intermediaries.
+      required: true
+      schema:
+        type: string
+        const: no-store
+
+  responses:
+    MethodNotAllowed:
+      description: >-
+        The route exists, but a non-HEAD method other than GET was used. The
+        application JSON error body carries METHOD_NOT_ALLOWED.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequiredRequestId"
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        Allow:
+          required: true
+          schema:
+            type: string
+            const: GET
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/MethodNotAllowedError"
+
+    HeadMethodNotAllowed:
+      description: >-
+        HEAD is not an operation. Go net/http suppresses response bodies for
+        HEAD, so the stable error code is carried by a required header instead
+        of the application JSON envelope.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequiredRequestId"
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        Allow:
+          required: true
+          schema:
+            type: string
+            const: GET
+        X-Quordon-Error-Code:
+          required: true
+          schema:
+            type: string
+            const: METHOD_NOT_ALLOWED
+
+    InvalidRequest:
+      description: >-
+        Path, query-string, or handler-visible forbidden request-body
+        framing/body validation failed before profile resolution or datasource
+        access. Transport framing rejected before handler dispatch is outside
+        this application JSON error contract.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequiredRequestId"
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/InvalidRequestError"
+
+    Unauthorized:
+      description: HTTP Basic credentials are absent or invalid.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequiredRequestId"
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        WWW-Authenticate:
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: "#/components/schemas/AuthenticationRequiredError"
+              - $ref: "#/components/schemas/InvalidCredentialsError"
+
+    DeniedOperation:
+      description: The profile is absent, unassigned, or does not grant this operation.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequiredRequestId"
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/DeniedOperationError"
+
+    NotFound:
+      description: >-
+        The resource is missing, denied, a non-InnoDB table, or not a
+        physical base table.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequiredRequestId"
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/NotFoundError"
+
+    UnsupportedQuery:
+      description: Statistics for an authorized view are unsupported.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequiredRequestId"
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UnsupportedQueryError"
+
+    ResultTooLarge:
+      description: The complete response cannot fit the effective result-byte limit.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequiredRequestId"
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ResultTooLargeError"
+
+    InternalError:
+      description: A sanitized internal invariant failure.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequiredRequestId"
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/InternalErrorEnvelope"
+
+    CapabilityNotImplemented:
+      description: The selected adapter does not implement table statistics.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequiredRequestId"
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CapabilityNotImplementedError"
+
+    UpstreamError:
+      description: The DBMS returned invalid, inconsistent, or unsupported metadata.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequiredRequestId"
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UpstreamErrorEnvelope"
+
+    Unavailable:
+      description: Capacity, a mandatory service dependency, or the datasource is unavailable.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequiredRequestId"
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: "#/components/schemas/CapacityExceededError"
+              - $ref: "#/components/schemas/ServiceUnavailableError"
+              - $ref: "#/components/schemas/DatabaseUnavailableError"
+
+    Timeout:
+      description: The bounded metadata operation exceeded its deadline.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequiredRequestId"
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/QueryTimeoutError"
+
+  schemas:
+    Identifier:
+      description: Portable SQL identifier validated before any datasource call.
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+
+    MetadataName:
+      description: >-
+        Valid UTF-8 DBMS-owned metadata name. Control characters and DEL are
+        forbidden; JSON escaping does not make an invalid name acceptable.
+      type: string
+      minLength: 1
+      maxLength: 64
+      pattern: '^[^\x00-\x1F\x7F]{1,64}$'
+      x-quordon-semantic-validation:
+        - valid-utf8
+        - at-most-256-utf8-bytes
+        - reject-all-unicode-control-code-points
+        - reject-bidirectional-formatting-code-points
+
+    CanonicalTimestamp:
+      description: Canonical RFC 3339 UTC timestamp with optional nanoseconds.
+      type: string
+      format: date-time
+      pattern: '^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]{1,9})?Z$'
+
+    CanonicalUnsignedIntegerString:
+      description: >-
+        Canonical uint64 in base 10. Leading zeroes, signs, fractions,
+        exponents, JSON numeric tokens, and values above 18446744073709551615
+        are forbidden.
+      type: string
+      minLength: 1
+      maxLength: 20
+      pattern: '^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]|1844674407370955161[0-5])$'
+
+    EstimatedUnsignedMetric:
+      description: Non-negative engine-maintained estimate preserved without floating point.
+      type: object
+      additionalProperties: false
+      required: [value, estimated]
+      properties:
+        value:
+          $ref: "#/components/schemas/CanonicalUnsignedIntegerString"
+        estimated:
+          type: boolean
+          const: true
+
+    ObservedUnsignedMetric:
+      description: Non-negative observed metadata value that is not an estimate.
+      type: object
+      additionalProperties: false
+      required: [value, estimated]
+      properties:
+        value:
+          $ref: "#/components/schemas/CanonicalUnsignedIntegerString"
+        estimated:
+          type: boolean
+          const: false
+
+    NullableEstimatedUnsignedMetric:
+      description: An estimate or explicit unavailability/not-applicability.
+      oneOf:
+        - $ref: "#/components/schemas/EstimatedUnsignedMetric"
+        - type: "null"
+
+    NullableObservedUnsignedMetric:
+      description: An observed value or explicit unavailability/not-applicability.
+      oneOf:
+        - $ref: "#/components/schemas/ObservedUnsignedMetric"
+        - type: "null"
+
+    TableStatisticsResult:
+      description: >-
+        Complete InnoDB table observation. Other storage engines are forbidden
+        because their row-count semantics may be exact or otherwise violate
+        this estimate-only operation. No array or metadata member may be
+        silently omitted or truncated to satisfy the response budget.
+      type: object
+      additionalProperties: false
+      required:
+        - policy_profile
+        - policy_version
+        - datasource
+        - adapter
+        - schema
+        - name
+        - observed_at
+        - engine
+        - table
+        - partitioning
+      properties:
+        policy_profile:
+          type: string
+          minLength: 1
+        policy_version:
+          type: string
+          minLength: 1
+        datasource:
+          type: string
+          minLength: 1
+        adapter:
+          type: string
+          const: mysql8
+        schema:
+          $ref: "#/components/schemas/Identifier"
+        name:
+          $ref: "#/components/schemas/Identifier"
+        observed_at:
+          $ref: "#/components/schemas/CanonicalTimestamp"
+        engine:
+          type: string
+          const: InnoDB
+        table:
+          $ref: "#/components/schemas/TableStatistics"
+        partitioning:
+          $ref: "#/components/schemas/Partitioning"
+
+    TableStatistics:
+      description: Table-level values reported directly by the engine, not sums of partitions.
+      type: object
+      additionalProperties: false
+      required:
+        - estimated_rows
+        - data_bytes
+        - index_bytes
+        - auto_increment
+      properties:
+        estimated_rows:
+          $ref: "#/components/schemas/NullableEstimatedUnsignedMetric"
+        data_bytes:
+          $ref: "#/components/schemas/NullableEstimatedUnsignedMetric"
+        index_bytes:
+          $ref: "#/components/schemas/NullableEstimatedUnsignedMetric"
+        auto_increment:
+          $ref: "#/components/schemas/NullableObservedUnsignedMetric"
+
+    PartitionStatistics:
+      description: Statistics reported directly for one physical partition leaf.
+      type: object
+      additionalProperties: false
+      required: [estimated_rows, data_bytes, index_bytes]
+      properties:
+        estimated_rows:
+          $ref: "#/components/schemas/NullableEstimatedUnsignedMetric"
+        data_bytes:
+          $ref: "#/components/schemas/NullableEstimatedUnsignedMetric"
+        index_bytes:
+          $ref: "#/components/schemas/NullableEstimatedUnsignedMetric"
+
+    PartitionMethod:
+      description: Portable top-level MySQL 8 partitioning method.
+      type: string
+      enum: [hash, linear_hash, key, linear_key, range, range_columns, list, list_columns]
+
+    SubpartitionParentMethod:
+      description: >-
+        Portable MySQL 8 parent partitioning method for a table that also uses
+        subpartitions. MySQL permits subpartitioning only below RANGE or LIST
+        family parent partitioning.
+      type: string
+      enum: [range, range_columns, list, list_columns]
+
+    SubpartitionMethod:
+      description: Portable MySQL 8 subpartitioning method.
+      type: string
+      enum: [hash, linear_hash, key, linear_key]
+
+    Partitioning:
+      description: Closed partitioning union selected by kind.
+      oneOf:
+        - $ref: "#/components/schemas/Unpartitioned"
+        - $ref: "#/components/schemas/Partitioned"
+        - $ref: "#/components/schemas/Subpartitioned"
+      discriminator:
+        propertyName: kind
+        mapping:
+          none: "#/components/schemas/Unpartitioned"
+          partitioned: "#/components/schemas/Partitioned"
+          subpartitioned: "#/components/schemas/Subpartitioned"
+
+    Unpartitioned:
+      description: The physical table has no partitions.
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          const: none
+
+    Partitioned:
+      description: A complete ordinally ordered list of partitions without subpartitions.
+      type: object
+      additionalProperties: false
+      required: [kind, method, partitions]
+      properties:
+        kind:
+          type: string
+          const: partitioned
+        method:
+          $ref: "#/components/schemas/PartitionMethod"
+        partitions:
+          type: array
+          minItems: 1
+          maxItems: 8192
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/PartitionEntry"
+
+    Subpartitioned:
+      description: >-
+        A complete ordinally ordered list of parent partitions and every leaf
+        subpartition. Estimates are reported only on physical leaf entries.
+      type: object
+      additionalProperties: false
+      required: [kind, method, subpartition_method, partitions]
+      properties:
+        kind:
+          type: string
+          const: subpartitioned
+        method:
+          $ref: "#/components/schemas/SubpartitionParentMethod"
+        subpartition_method:
+          $ref: "#/components/schemas/SubpartitionMethod"
+        partitions:
+          type: array
+          minItems: 1
+          maxItems: 8192
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/SubpartitionGroup"
+
+    PartitionEntry:
+      description: One physical partition without subpartitions.
+      type: object
+      additionalProperties: false
+      required: [name, ordinal, statistics]
+      properties:
+        name:
+          $ref: "#/components/schemas/MetadataName"
+        ordinal:
+          type: integer
+          minimum: 1
+          maximum: 8192
+        statistics:
+          $ref: "#/components/schemas/PartitionStatistics"
+
+    SubpartitionGroup:
+      description: One parent partition containing physical leaf subpartitions.
+      type: object
+      additionalProperties: false
+      required: [name, ordinal, subpartitions]
+      properties:
+        name:
+          $ref: "#/components/schemas/MetadataName"
+        ordinal:
+          type: integer
+          minimum: 1
+          maximum: 8192
+        subpartitions:
+          type: array
+          minItems: 1
+          maxItems: 8192
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/SubpartitionEntry"
+
+    SubpartitionEntry:
+      description: One physical leaf subpartition.
+      type: object
+      additionalProperties: false
+      required: [name, ordinal, statistics]
+      properties:
+        name:
+          $ref: "#/components/schemas/MetadataName"
+        ordinal:
+          type: integer
+          minimum: 1
+          maximum: 8192
+        statistics:
+          $ref: "#/components/schemas/PartitionStatistics"
+
+    ErrorEnvelopeBase:
+      description: Sanitized error envelope for the proposed endpoint.
+      type: object
+      required: [code, message, request_id]
+      properties:
+        code:
+          type: string
+          minLength: 1
+        message:
+          type: string
+          minLength: 1
+        request_id:
+          type: string
+          minLength: 1
+        policy_version:
+          type: string
+          minLength: 1
+
+    InvalidRequestError:
+      description: Strict path or query-string validation failure.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          properties:
+            code: {type: string, const: INVALID_REQUEST}
+      unevaluatedProperties: false
+
+    MethodNotAllowedError:
+      description: Unsupported HTTP method for this exact route.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          properties:
+            code: {type: string, const: METHOD_NOT_ALLOWED}
+      unevaluatedProperties: false
+
+    AuthenticationRequiredError:
+      description: Missing HTTP Basic credentials.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          properties:
+            code: {type: string, const: AUTHENTICATION_REQUIRED}
+      unevaluatedProperties: false
+
+    InvalidCredentialsError:
+      description: Invalid HTTP Basic credentials.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          properties:
+            code: {type: string, const: INVALID_CREDENTIALS}
+      unevaluatedProperties: false
+
+    DeniedOperationError:
+      description: Profile assignment or operation policy denial.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          required: [policy_version]
+          properties:
+            code: {type: string, const: DENIED_OPERATION}
+            message:
+              type: string
+              const: The operation is not allowed by policy
+      unevaluatedProperties: false
+
+    UnsupportedQueryError:
+      description: The authorized object cannot provide supported statistics.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          properties:
+            code: {type: string, const: UNSUPPORTED_QUERY}
+      unevaluatedProperties: false
+
+    NotFoundError:
+      description: Non-enumerating missing or unauthorized resource response.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          required: [policy_version]
+          properties:
+            code: {type: string, const: NOT_FOUND}
+            message:
+              type: string
+              const: The requested resource was not found
+      unevaluatedProperties: false
+
+    ResultTooLargeError:
+      description: Complete metadata response exceeds the effective byte budget.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          required: [policy_version]
+          properties:
+            code: {type: string, const: RESULT_TOO_LARGE}
+      unevaluatedProperties: false
+
+    InternalErrorEnvelope:
+      description: Sanitized internal service failure.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          properties:
+            code: {type: string, const: INTERNAL_ERROR}
+      unevaluatedProperties: false
+
+    CapabilityNotImplementedError:
+      description: Adapter capability is not implemented.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          required: [policy_version]
+          properties:
+            code: {type: string, const: CAPABILITY_NOT_IMPLEMENTED}
+      unevaluatedProperties: false
+
+    UpstreamErrorEnvelope:
+      description: Sanitized invalid or inconsistent DBMS metadata failure.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          required: [policy_version]
+          properties:
+            code: {type: string, const: UPSTREAM_ERROR}
+      unevaluatedProperties: false
+
+    CapacityExceededError:
+      description: Bounded global or profile execution capacity is exhausted.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          required: [policy_version]
+          properties:
+            code: {type: string, const: CAPACITY_EXCEEDED}
+      unevaluatedProperties: false
+
+    ServiceUnavailableError:
+      description: Mandatory non-database dependency is unavailable.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          properties:
+            code: {type: string, const: SERVICE_UNAVAILABLE}
+      unevaluatedProperties: false
+
+    DatabaseUnavailableError:
+      description: Configured datasource is unavailable.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          required: [policy_version]
+          properties:
+            code: {type: string, const: DATABASE_UNAVAILABLE}
+      unevaluatedProperties: false
+
+    QueryTimeoutError:
+      description: Bounded metadata operation exceeded its deadline.
+      allOf:
+        - $ref: "#/components/schemas/ErrorEnvelopeBase"
+        - type: object
+          required: [policy_version]
+          properties:
+            code: {type: string, const: QUERY_TIMEOUT}
+      unevaluatedProperties: false

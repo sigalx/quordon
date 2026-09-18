@@ -1,0 +1,1712 @@
+version: 1
+
+server:
+  listen: :8080
+
+hard_limits:
+  deadline_ms: 10000
+  max_request_bytes: 262144
+  max_projection_fields: 100
+  max_group_by_fields: 100
+  max_order_by_fields: 100
+  max_predicates: 200
+  max_expression_depth: 16
+  max_parameters: 200
+  max_rows: 5000
+  max_result_bytes: 5242880
+  max_offset: 100000
+  max_concurrency: 8
+
+authentication:
+  basic:
+    realm: quordon
+    users:
+      integration-client:
+        principal: integration-client
+        password_hash_secret_ref: env:QUORDON_EXPLAIN_PASSWORD_HASH
+
+principals:
+  integration-client:
+    profiles: [query-explainer, data-reader, metadata-reader, analytics, views-reader, admission-reader, index-merge-reader, diagnostic-reader]
+
+datasources:
+  integration-mysql:
+    adapter: mysql8
+    # The adapter must override all result-affecting options: query values stay
+    # server-side binds, text is UTF8MB4, and column names stay unqualified.
+    # SELECT-only by design: view EXPLAIN and preflight report unavailable
+    # without SHOW VIEW; readiness and ordinary SELECT remain supported.
+    dsn: "quordon:quordon-password@tcp(mysql:3306)/?parseTime=true&interpolateParams=true&columnsWithAlias=true&collation=latin1_swedish_ci"
+    tls_required: false
+    required_for_readiness: true
+    pool:
+      max_open_connections: 2
+      max_idle_connections: 1
+      max_connection_lifetime_seconds: 60
+
+profiles:
+  query-explainer:
+    datasource: integration-mysql
+    operations: [explain_select]
+    resources:
+      schemas:
+        allow: [application]
+      objects:
+        # Case-colliding objects remain distinct on lower_case_table_names=0.
+        allow: [application.orders, application.Orders]
+      fields:
+        allow: [application.orders.*, application.Orders.*]
+    query:
+      allow_filtering: true
+      allow_group_by: true
+      allow_sorting: true
+      allowed_filter_operators: [eq, in, is_null, is_not_null]
+      allowed_aggregates: [count, min, max, sum, avg]
+    limits:
+      deadline_ms: 3000
+      max_request_bytes: 65536
+      max_projection_fields: 50
+      max_group_by_fields: 50
+      max_order_by_fields: 50
+      max_predicates: 50
+      max_expression_depth: 8
+      max_parameters: 100
+      max_rows: 1000
+      max_result_bytes: 1048576
+      max_offset: 10000
+      max_concurrency: 2
+
+  data-reader:
+    datasource: integration-mysql
+    operations: [list_objects, describe_object, describe_object_statistics, select]
+    resources:
+      schemas:
+        allow: [application]
+      objects:
+        # Tables and trusted views use the same query boundary.
+        allow:
+          - application.orders
+          - application.Orders
+          - application.partitioned_orders
+          - application.subpartitioned_events
+          - application.legacy_exact_rows
+          - application.character_keys
+      fields:
+        allow: [application.orders.*, application.Orders.*, application.character_keys.*]
+        deny: [application.character_keys.hidden_value]
+    query:
+      allow_filtering: true
+      allow_group_by: false
+      allow_sorting: true
+      allowed_filter_operators: [eq, in, is_null, is_not_null]
+      allowed_aggregates: []
+    limits:
+      deadline_ms: 3000
+      max_request_bytes: 65536
+      max_projection_fields: 50
+      max_group_by_fields: 1
+      max_order_by_fields: 50
+      max_predicates: 50
+      max_expression_depth: 8
+      max_parameters: 100
+      max_rows: 100
+      max_result_bytes: 1048576
+      max_offset: 10000
+      max_concurrency: 2
+
+  metadata-reader:
+    datasource: integration-mysql
+    operations: [list_objects, describe_object]
+    resources:
+      schemas:
+        allow: [application]
+      objects:
+        allow: [application.orders]
+      fields:
+        allow: [application.orders.id]
+    query:
+      allow_filtering: false
+      allow_group_by: false
+      allow_sorting: false
+      allowed_filter_operators: []
+      allowed_aggregates: []
+    limits:
+      deadline_ms: 3000
+      max_request_bytes: 65536
+      max_projection_fields: 50
+      max_group_by_fields: 1
+      max_order_by_fields: 1
+      max_predicates: 50
+      max_expression_depth: 8
+      max_parameters: 100
+      max_rows: 100
+      max_result_bytes: 256
+      max_offset: 10000
+      max_concurrency: 2
+
+  analytics:
+    datasource: integration-mysql
+    operations: [aggregate, select_keyset, list_query_shapes]
+    resources:
+      schemas:
+        allow: [application]
+      objects:
+        allow: [application.orders, application.temporal_events, application.character_keys, application.lossy_character_keys]
+      fields:
+        allow: [application.orders.*, application.temporal_events.*, application.character_keys.*, application.lossy_character_keys.*]
+        deny: [application.character_keys.hidden_value]
+    query:
+      allow_filtering: true
+      allow_group_by: true
+      allow_sorting: true
+      allowed_filter_operators: [eq, gte, is_null, is_not_null]
+      allowed_aggregates: [count, min, max, sum, avg]
+      aggregate_shapes:
+        - name: orders_by_created_day
+          public_description: Count orders grouped by their UTC creation day.
+          mode: grouped
+          source:
+            schema: application
+            name: orders
+          projection:
+            - kind: time_bucket
+              field: created_at
+              unit: day
+              timezone: UTC
+              alias: created_day
+            - kind: measure
+              function: count_all
+              alias: orders_count
+          order_by:
+            - kind: time_bucket
+              alias: created_day
+              direction: asc
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+
+        - name: orders_by_status
+          public_description: Count and sum orders grouped by status.
+          mode: grouped
+          source:
+            schema: application
+            name: orders
+          projection:
+            - kind: dimension
+              field: status
+            - kind: measure
+              function: count_all
+              alias: orders_count
+            - kind: measure
+              function: sum
+              field: amount
+              alias: amount_sum
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: active_orders_summary
+          public_description: Count active orders and show the latest creation time.
+          mode: scalar
+          source:
+            schema: application
+            name: orders
+          projection:
+            - kind: measure
+              function: count_all
+              alias: orders_count
+            - kind: measure
+              function: max
+              field: created_at
+              alias: latest_created_at
+          filter:
+            kind: predicate
+            field: status
+            operator: eq
+            value_types: [string]
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: invisible_index_rejected
+          mode: scalar
+          source:
+            schema: application
+            name: orders
+          projection:
+            - kind: measure
+              function: count_all
+              alias: invisible_index_count
+          filter:
+            kind: predicate
+            field: status
+            operator: eq
+            value_types: [string]
+          required_index: idx_orders_invisible
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: missing_order_summary
+          mode: scalar
+          source:
+            schema: application
+            name: orders
+          projection:
+            - kind: measure
+              function: count_all
+              alias: missing_orders_count
+            - kind: measure
+              function: max
+              field: created_at
+              alias: latest_missing_created_at
+          filter:
+            kind: predicate
+            field: id
+            operator: eq
+            value_types: [integer]
+          maximum_rows_examined_per_scan: 1
+      keyset_select_shapes:
+        - name: orders_by_id
+          public_description: Page through orders in stable primary-key order.
+          source:
+            schema: application
+            name: orders
+          projection:
+            - kind: field
+              field: id
+            - kind: field
+              field: status
+            - kind: field
+              field: amount
+          filter:
+            kind: group
+            operator: and
+            expressions:
+              - kind: predicate
+                field: amount
+                operator: gte
+                value_types: [decimal]
+              - kind: predicate
+                field: id
+                operator: gte
+                value_types: [integer]
+          order_by:
+            - field: id
+              direction: asc
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: temporal_events_by_date
+          public_description: Page through generic temporal events by date and numeric tie-breaker.
+          source:
+            schema: application
+            name: temporal_events
+          projection:
+            - kind: field
+              field: event_date
+            - kind: field
+              field: id
+            - kind: field
+              field: label
+          order_by:
+            - field: event_date
+              direction: asc
+            - field: id
+              direction: asc
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: temporal_events_by_datetime
+          public_description: Page backward through generic temporal events by wall-clock time.
+          source:
+            schema: application
+            name: temporal_events
+          projection:
+            - kind: field
+              field: wall_time
+            - kind: field
+              field: id
+            - kind: field
+              field: label
+          order_by:
+            - field: wall_time
+              direction: desc
+            - field: id
+              direction: desc
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: temporal_events_by_timestamp
+          public_description: Page through generic temporal events by UTC instant and binary tie-breaker.
+          source:
+            schema: application
+            name: temporal_events
+          projection:
+            - kind: field
+              field: occurred_at
+            - kind: field
+              field: token
+            - kind: field
+              field: id
+          order_by:
+            - field: occurred_at
+              direction: asc
+            - field: token
+              direction: asc
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: characters_by_unicode
+          source: {schema: application, name: character_keys}
+          projection:
+            - {kind: field, field: id}
+            - {kind: field, field: unicode_label}
+            - {kind: field, field: western_label}
+          filter: {kind: predicate, field: western_label, operator: gte, value_types: [string]}
+          order_by:
+            - {field: unicode_label, direction: asc}
+            - {field: western_label, direction: asc}
+            - {field: id, direction: asc}
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: characters_by_unicode_desc
+          source: {schema: application, name: character_keys}
+          projection:
+            - {kind: field, field: id}
+            - {kind: field, field: unicode_label}
+            - {kind: field, field: western_label}
+          order_by:
+            - {field: unicode_label, direction: desc}
+            - {field: western_label, direction: desc}
+            - {field: id, direction: desc}
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: characters_by_western
+          source: {schema: application, name: character_keys}
+          projection:
+            - {kind: field, field: id}
+            - {kind: field, field: western_label}
+          order_by:
+            - {field: western_label, direction: asc}
+            - {field: id, direction: asc}
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: characters_by_cyrillic
+          source: {schema: application, name: character_keys}
+          projection:
+            - {kind: field, field: id}
+            - {kind: field, field: cyrillic_label}
+          order_by:
+            - {field: cyrillic_label, direction: asc}
+            - {field: id, direction: asc}
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: characters_by_wide
+          source: {schema: application, name: character_keys}
+          projection:
+            - {kind: field, field: id}
+            - {kind: field, field: wide_label}
+          order_by:
+            - {field: wide_label, direction: desc}
+            - {field: id, direction: desc}
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: characters_by_ascii
+          source: {schema: application, name: character_keys}
+          projection:
+            - {kind: field, field: id}
+            - {kind: field, field: ascii_label}
+          order_by:
+            - {field: ascii_label, direction: asc}
+            - {field: id, direction: asc}
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: lossy_characters_by_pk
+          source: {schema: application, name: lossy_character_keys}
+          projection:
+            - {kind: field, field: id}
+            - {kind: field, field: label}
+          order_by:
+            - {field: label, direction: asc}
+            - {field: id, direction: asc}
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+    limits:
+      deadline_ms: 3000
+      max_request_bytes: 65536
+      max_projection_fields: 50
+      max_group_by_fields: 20
+      max_order_by_fields: 20
+      max_predicates: 50
+      max_expression_depth: 8
+      max_parameters: 100
+      max_rows: 1000
+      max_result_bytes: 1048576
+      max_offset: 0
+      max_concurrency: 2
+
+  views-reader:
+    datasource: integration-mysql
+    operations: [list_objects, describe_object, describe_object_statistics, explain_select, select, aggregate, select_keyset, list_query_shapes]
+    resources:
+      schemas:
+        allow: [application]
+      objects:
+        allow: [application.Orders, application.join_orders, application.materialized_orders, application.character_aliases]
+      fields:
+        allow: [application.Orders.*, application.join_orders.*, application.materialized_orders.*, application.character_aliases.*]
+        deny: [application.character_aliases.hidden_value, application.character_keys.hidden_value]
+    query:
+      allow_filtering: true
+      allow_group_by: true
+      allow_sorting: true
+      allowed_filter_operators: [eq, gte, is_null, is_not_null]
+      allowed_aggregates: [count, min, max, sum, avg]
+      aggregate_shapes:
+        - name: Orders_scalar
+          mode: scalar
+          source: {schema: application, name: Orders}
+          projection:
+            - {kind: measure, function: count_all, alias: row_count}
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: Orders_grouped
+          mode: grouped
+          source: {schema: application, name: Orders}
+          projection:
+            - {kind: dimension, field: status}
+            - {kind: measure, function: count_all, alias: row_count}
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: join_orders_scalar
+          mode: scalar
+          source: {schema: application, name: join_orders}
+          projection:
+            - {kind: measure, function: count_all, alias: row_count}
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: join_orders_grouped
+          mode: grouped
+          source: {schema: application, name: join_orders}
+          projection:
+            - {kind: dimension, field: status}
+            - {kind: measure, function: count_all, alias: row_count}
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: materialized_orders_scalar
+          mode: scalar
+          source: {schema: application, name: materialized_orders}
+          projection:
+            - {kind: measure, function: count_all, alias: row_count}
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: materialized_orders_grouped
+          mode: grouped
+          source: {schema: application, name: materialized_orders}
+          projection:
+            - {kind: dimension, field: status}
+            - {kind: measure, function: count_all, alias: row_count}
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+      keyset_select_shapes:
+        - name: Orders_pages
+          source: {schema: application, name: Orders}
+          projection:
+            - {kind: field, field: id}
+            - {kind: field, field: status}
+          order_by:
+            - {field: id, direction: asc}
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: join_orders_pages
+          source: {schema: application, name: join_orders}
+          projection:
+            - {kind: field, field: order_id}
+            - {kind: field, field: event_id}
+            - {kind: field, field: status}
+          order_by:
+            - {field: order_id, direction: asc}
+            - {field: event_id, direction: asc}
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: materialized_orders_pages
+          source: {schema: application, name: materialized_orders}
+          projection:
+            - {kind: field, field: id}
+            - {kind: field, field: status}
+          order_by:
+            - {field: id, direction: asc}
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: character_aliases_pages
+          source: {schema: application, name: character_aliases}
+          projection:
+            - {kind: field, field: unicode_label}
+            - {kind: field, field: id}
+            - {kind: field, field: exposed_alias}
+          order_by:
+            - {field: unicode_label, direction: asc}
+            - {field: id, direction: asc}
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+    limits:
+      deadline_ms: 3000
+      max_request_bytes: 65536
+      max_projection_fields: 50
+      max_group_by_fields: 20
+      max_order_by_fields: 20
+      max_predicates: 50
+      max_expression_depth: 8
+      max_parameters: 100
+      max_rows: 100
+      max_result_bytes: 1048576
+      max_offset: 0
+      max_concurrency: 2
+
+  # Physical-object fixtures exercise admission independently of SHOW VIEW.
+  admission-reader:
+    datasource: integration-mysql
+    operations: [aggregate, select_keyset]
+    resources:
+      schemas:
+        allow: [application]
+      objects:
+        allow: [application.orders]
+      fields:
+        allow: [application.orders.id, application.orders.status, application.orders.amount]
+    query:
+      allow_filtering: true
+      allow_group_by: true
+      allow_sorting: true
+      allowed_filter_operators: [eq]
+      allowed_aggregates: [count, sum]
+      aggregate_shapes:
+        - name: plan_unconstrained
+          mode: scalar
+          source: {schema: application, name: orders}
+          projection:
+            - {kind: measure, function: count_all, alias: unconstrained}
+          maximum_rows_examined_per_scan: 100
+        - name: plan_index_match
+          mode: scalar
+          source: {schema: application, name: orders}
+          projection:
+            - {kind: measure, function: count_all, alias: index_match}
+          filter:
+            kind: predicate
+            field: status
+            operator: eq
+            value_types: [string]
+          required_index: idx_orders_status
+          maximum_rows_examined_per_scan: 100
+        - name: plan_index_mismatch
+          mode: scalar
+          source: {schema: application, name: orders}
+          projection:
+            - {kind: measure, function: count_all, alias: index_mismatch}
+          required_index: missing_index
+          maximum_rows_examined_per_scan: 100
+        - name: plan_estimate_rejected
+          mode: scalar
+          source: {schema: application, name: orders}
+          projection:
+            - {kind: measure, function: sum, field: amount, alias: estimate_rejected}
+          maximum_rows_examined_per_scan: 1
+        - name: plan_temporary_rejected
+          mode: grouped
+          source: {schema: application, name: orders}
+          projection:
+            - {kind: dimension, field: amount}
+            - {kind: measure, function: count_all, alias: temporary_rejected}
+          order_by:
+            - {kind: measure, alias: temporary_rejected, direction: desc}
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_filesort: true
+        - name: plan_filesort_rejected
+          mode: grouped
+          source: {schema: application, name: orders}
+          projection:
+            - {kind: dimension, field: amount}
+            - {kind: measure, function: count_all, alias: filesort_rejected}
+          order_by:
+            - {kind: measure, alias: filesort_rejected, direction: desc}
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+        - name: plan_work_allowed
+          mode: grouped
+          source: {schema: application, name: orders}
+          projection:
+            - {kind: dimension, field: amount}
+            - {kind: measure, function: count_all, alias: work_allowed}
+          order_by:
+            - {kind: measure, alias: work_allowed, direction: desc}
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+      keyset_select_shapes:
+        - name: plan_keyset_unconstrained
+          source: {schema: application, name: orders}
+          projection:
+            - {kind: field, field: id}
+            - {kind: field, field: status, alias: unconstrained}
+          order_by:
+            - {field: id, direction: asc}
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+        - name: plan_keyset_index_match
+          source: {schema: application, name: orders}
+          projection:
+            - {kind: field, field: id}
+            - {kind: field, field: status, alias: index_match}
+          order_by:
+            - {field: id, direction: asc}
+          maximum_limit: 20
+          required_index: PRIMARY
+          maximum_rows_examined_per_scan: 100
+        - name: plan_keyset_index_mismatch
+          source: {schema: application, name: orders}
+          projection:
+            - {kind: field, field: id}
+            - {kind: field, field: status, alias: index_mismatch}
+          order_by:
+            - {field: id, direction: asc}
+          maximum_limit: 20
+          required_index: missing_index
+          maximum_rows_examined_per_scan: 100
+        - name: plan_keyset_estimate_rejected
+          source: {schema: application, name: orders}
+          projection:
+            - {kind: field, field: id}
+            - {kind: field, field: status, alias: estimate_rejected}
+          order_by:
+            - {field: id, direction: asc}
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 1
+        - name: plan_keyset_filesort_rejected
+          source: {schema: application, name: orders}
+          projection:
+            - {kind: field, field: id}
+            - {kind: field, field: status, alias: filesort_rejected}
+          order_by:
+            - {field: status, direction: asc}
+            - {field: id, direction: desc}
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+        - name: plan_keyset_work_allowed
+          source: {schema: application, name: orders}
+          projection:
+            - {kind: field, field: id}
+            - {kind: field, field: status, alias: work_allowed}
+          order_by:
+            - {field: status, direction: asc}
+            - {field: id, direction: desc}
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_filesort: true
+    limits:
+      deadline_ms: 3000
+      max_request_bytes: 65536
+      max_projection_fields: 50
+      max_group_by_fields: 20
+      max_order_by_fields: 20
+      max_predicates: 50
+      max_expression_depth: 8
+      max_parameters: 100
+      max_rows: 100
+      max_result_bytes: 1048576
+      max_offset: 0
+      max_concurrency: 2
+
+  # Native index-merge regression fixtures use the same SELECT-only datasource.
+  index-merge-reader:
+    datasource: integration-mysql
+    operations: [aggregate, select_keyset]
+    resources:
+      schemas:
+        allow: [application]
+      objects:
+        allow: [application.merge_rows, application.comma_rows, application.ambiguous_merge_rows, application.physical_alias_view]
+      fields:
+        allow: [application.merge_rows.id, application.merge_rows.a, application.merge_rows.b, application.comma_rows.id, application.comma_rows.a, application.ambiguous_merge_rows.id, application.ambiguous_merge_rows.a, application.ambiguous_merge_rows.b, application.physical_alias_view.id, application.physical_alias_view.b]
+    query:
+      allow_filtering: true
+      allow_group_by: false
+      allow_sorting: true
+      allowed_filter_operators: [eq, lt]
+      allowed_aggregates: [count]
+      aggregate_shapes:
+        - name: merge_union_unconstrained
+          mode: scalar
+          source: {schema: application, name: merge_rows}
+          projection:
+            - {kind: measure, function: count_all, alias: union_unconstrained}
+          filter:
+            kind: group
+            operator: or
+            expressions:
+              - {kind: predicate, field: a, operator: eq, value_types: [integer]}
+              - {kind: predicate, field: b, operator: eq, value_types: [integer]}
+          maximum_rows_examined_per_scan: 1000
+        - name: merge_union_first
+          mode: scalar
+          source: {schema: application, name: merge_rows}
+          projection:
+            - {kind: measure, function: count_all, alias: union_first}
+          filter:
+            kind: group
+            operator: or
+            expressions:
+              - {kind: predicate, field: a, operator: eq, value_types: [integer]}
+              - {kind: predicate, field: b, operator: eq, value_types: [integer]}
+          required_index: idx_a
+          maximum_rows_examined_per_scan: 1000
+        - name: merge_union_second
+          mode: scalar
+          source: {schema: application, name: merge_rows}
+          projection:
+            - {kind: measure, function: count_all, alias: union_second}
+          filter:
+            kind: group
+            operator: or
+            expressions:
+              - {kind: predicate, field: a, operator: eq, value_types: [integer]}
+              - {kind: predicate, field: b, operator: eq, value_types: [integer]}
+          required_index: idx_b
+          maximum_rows_examined_per_scan: 1000
+        - name: merge_union_mismatch
+          mode: scalar
+          source: {schema: application, name: merge_rows}
+          projection:
+            - {kind: measure, function: count_all, alias: union_mismatch}
+          filter:
+            kind: group
+            operator: or
+            expressions:
+              - {kind: predicate, field: a, operator: eq, value_types: [integer]}
+              - {kind: predicate, field: b, operator: eq, value_types: [integer]}
+          required_index: PRIMARY
+          maximum_rows_examined_per_scan: 1000
+        - name: merge_intersect_unconstrained
+          mode: scalar
+          source: {schema: application, name: merge_rows}
+          projection:
+            - {kind: measure, function: count_all, alias: intersect_unconstrained}
+          filter:
+            kind: group
+            operator: and
+            expressions:
+              - {kind: predicate, field: a, operator: eq, value_types: [integer]}
+              - {kind: predicate, field: b, operator: eq, value_types: [integer]}
+          maximum_rows_examined_per_scan: 1000
+        - name: merge_intersect_first
+          mode: scalar
+          source: {schema: application, name: merge_rows}
+          projection:
+            - {kind: measure, function: count_all, alias: intersect_first}
+          filter:
+            kind: group
+            operator: and
+            expressions:
+              - {kind: predicate, field: a, operator: eq, value_types: [integer]}
+              - {kind: predicate, field: b, operator: eq, value_types: [integer]}
+          required_index: idx_a
+          maximum_rows_examined_per_scan: 1000
+        - name: merge_intersect_second
+          mode: scalar
+          source: {schema: application, name: merge_rows}
+          projection:
+            - {kind: measure, function: count_all, alias: intersect_second}
+          filter:
+            kind: group
+            operator: and
+            expressions:
+              - {kind: predicate, field: a, operator: eq, value_types: [integer]}
+              - {kind: predicate, field: b, operator: eq, value_types: [integer]}
+          required_index: idx_b
+          maximum_rows_examined_per_scan: 1000
+        - name: merge_intersect_mismatch
+          mode: scalar
+          source: {schema: application, name: merge_rows}
+          projection:
+            - {kind: measure, function: count_all, alias: intersect_mismatch}
+          filter:
+            kind: group
+            operator: and
+            expressions:
+              - {kind: predicate, field: a, operator: eq, value_types: [integer]}
+              - {kind: predicate, field: b, operator: eq, value_types: [integer]}
+          required_index: PRIMARY
+          maximum_rows_examined_per_scan: 1000
+        - name: merge_sort_union_unconstrained
+          mode: scalar
+          source: {schema: application, name: merge_rows}
+          projection:
+            - {kind: measure, function: count_all, alias: sort_union_unconstrained}
+          filter:
+            kind: group
+            operator: or
+            expressions:
+              - {kind: predicate, field: a, operator: lt, value_types: [integer]}
+              - {kind: predicate, field: b, operator: lt, value_types: [integer]}
+          maximum_rows_examined_per_scan: 1000
+        - name: merge_sort_union_first
+          mode: scalar
+          source: {schema: application, name: merge_rows}
+          projection:
+            - {kind: measure, function: count_all, alias: sort_union_first}
+          filter:
+            kind: group
+            operator: or
+            expressions:
+              - {kind: predicate, field: a, operator: lt, value_types: [integer]}
+              - {kind: predicate, field: b, operator: lt, value_types: [integer]}
+          required_index: idx_a
+          maximum_rows_examined_per_scan: 1000
+        - name: merge_sort_union_second
+          mode: scalar
+          source: {schema: application, name: merge_rows}
+          projection:
+            - {kind: measure, function: count_all, alias: sort_union_second}
+          filter:
+            kind: group
+            operator: or
+            expressions:
+              - {kind: predicate, field: a, operator: lt, value_types: [integer]}
+              - {kind: predicate, field: b, operator: lt, value_types: [integer]}
+          required_index: idx_b
+          maximum_rows_examined_per_scan: 1000
+        - name: merge_sort_union_mismatch
+          mode: scalar
+          source: {schema: application, name: merge_rows}
+          projection:
+            - {kind: measure, function: count_all, alias: sort_union_mismatch}
+          filter:
+            kind: group
+            operator: or
+            expressions:
+              - {kind: predicate, field: a, operator: lt, value_types: [integer]}
+              - {kind: predicate, field: b, operator: lt, value_types: [integer]}
+          required_index: PRIMARY
+          maximum_rows_examined_per_scan: 1000
+        - name: comma_count_unconstrained
+          mode: scalar
+          source: {schema: application, name: comma_rows}
+          projection:
+            - {kind: measure, function: count_all, alias: comma_unconstrained}
+          filter:
+            kind: predicate
+            field: a
+            operator: eq
+            value_types: [integer]
+          maximum_rows_examined_per_scan: 1000
+        - name: comma_count_prefix
+          mode: scalar
+          source: {schema: application, name: comma_rows}
+          projection:
+            - {kind: measure, function: count_all, alias: comma_prefix}
+          filter:
+            kind: predicate
+            field: a
+            operator: eq
+            value_types: [integer]
+          maximum_rows_examined_per_scan: 1000
+          required_index: idx_a
+        - name: comma_count_suffix
+          mode: scalar
+          source: {schema: application, name: comma_rows}
+          projection:
+            - {kind: measure, function: count_all, alias: comma_suffix}
+          filter:
+            kind: predicate
+            field: a
+            operator: eq
+            value_types: [integer]
+          maximum_rows_examined_per_scan: 1000
+          required_index: idx_b
+        - name: ambiguous_count_unconstrained
+          mode: scalar
+          source: {schema: application, name: ambiguous_merge_rows}
+          projection:
+            - {kind: measure, function: count_all, alias: ambiguous_unconstrained}
+          filter:
+            kind: group
+            operator: or
+            expressions:
+              - {kind: predicate, field: a, operator: eq, value_types: [integer]}
+              - {kind: predicate, field: b, operator: eq, value_types: [integer]}
+          maximum_rows_examined_per_scan: 1000
+        - name: ambiguous_count_prefix
+          mode: scalar
+          source: {schema: application, name: ambiguous_merge_rows}
+          projection:
+            - {kind: measure, function: count_all, alias: ambiguous_prefix}
+          filter:
+            kind: group
+            operator: or
+            expressions:
+              - {kind: predicate, field: a, operator: eq, value_types: [integer]}
+              - {kind: predicate, field: b, operator: eq, value_types: [integer]}
+          maximum_rows_examined_per_scan: 1000
+          required_index: idx_a
+        - name: ambiguous_count_suffix
+          mode: scalar
+          source: {schema: application, name: ambiguous_merge_rows}
+          projection:
+            - {kind: measure, function: count_all, alias: ambiguous_suffix}
+          filter:
+            kind: group
+            operator: or
+            expressions:
+              - {kind: predicate, field: a, operator: eq, value_types: [integer]}
+              - {kind: predicate, field: b, operator: eq, value_types: [integer]}
+          maximum_rows_examined_per_scan: 1000
+          required_index: idx_b
+        - name: ambiguous_count_actual
+          mode: scalar
+          source: {schema: application, name: ambiguous_merge_rows}
+          projection:
+            - {kind: measure, function: count_all, alias: ambiguous_actual}
+          filter:
+            kind: group
+            operator: or
+            expressions:
+              - {kind: predicate, field: a, operator: eq, value_types: [integer]}
+              - {kind: predicate, field: b, operator: eq, value_types: [integer]}
+          maximum_rows_examined_per_scan: 1000
+          required_index: idx_c
+        - name: physical_alias_count
+          mode: scalar
+          source: {schema: application, name: physical_alias_view}
+          projection:
+            - {kind: measure, function: count_all, alias: alias_count}
+          filter: {kind: predicate, field: b, operator: eq, value_types: [integer]}
+          required_index: idx_c
+          maximum_rows_examined_per_scan: 1000
+      keyset_select_shapes:
+        - name: merge_pages_unconstrained
+          source: {schema: application, name: merge_rows}
+          projection:
+            - {kind: field, field: a}
+            - {kind: field, field: b}
+            - {kind: field, field: id, alias: unconstrained}
+          filter:
+            kind: group
+            operator: or
+            expressions:
+              - {kind: predicate, field: a, operator: eq, value_types: [integer]}
+              - {kind: predicate, field: b, operator: eq, value_types: [integer]}
+          order_by:
+            - {field: a, direction: asc}
+            - {field: b, direction: asc}
+            - {field: id, direction: asc}
+          maximum_limit: 100
+          maximum_rows_examined_per_scan: 1000
+          allow_filesort: true
+        - name: merge_pages_first
+          source: {schema: application, name: merge_rows}
+          projection:
+            - {kind: field, field: a}
+            - {kind: field, field: b}
+            - {kind: field, field: id, alias: first}
+          filter:
+            kind: group
+            operator: or
+            expressions:
+              - {kind: predicate, field: a, operator: eq, value_types: [integer]}
+              - {kind: predicate, field: b, operator: eq, value_types: [integer]}
+          order_by:
+            - {field: a, direction: asc}
+            - {field: b, direction: asc}
+            - {field: id, direction: asc}
+          maximum_limit: 100
+          required_index: idx_a
+          maximum_rows_examined_per_scan: 1000
+          allow_filesort: true
+        - name: merge_pages_second
+          source: {schema: application, name: merge_rows}
+          projection:
+            - {kind: field, field: a}
+            - {kind: field, field: b}
+            - {kind: field, field: id, alias: second}
+          filter:
+            kind: group
+            operator: or
+            expressions:
+              - {kind: predicate, field: a, operator: eq, value_types: [integer]}
+              - {kind: predicate, field: b, operator: eq, value_types: [integer]}
+          order_by:
+            - {field: a, direction: asc}
+            - {field: b, direction: asc}
+            - {field: id, direction: asc}
+          maximum_limit: 100
+          required_index: idx_b
+          maximum_rows_examined_per_scan: 1000
+          allow_filesort: true
+        - name: merge_pages_mismatch
+          source: {schema: application, name: merge_rows}
+          projection:
+            - {kind: field, field: a}
+            - {kind: field, field: b}
+            - {kind: field, field: id, alias: mismatch}
+          filter:
+            kind: group
+            operator: or
+            expressions:
+              - {kind: predicate, field: a, operator: eq, value_types: [integer]}
+              - {kind: predicate, field: b, operator: eq, value_types: [integer]}
+          order_by:
+            - {field: a, direction: asc}
+            - {field: b, direction: asc}
+            - {field: id, direction: asc}
+          maximum_limit: 100
+          required_index: PRIMARY
+          maximum_rows_examined_per_scan: 1000
+          allow_filesort: true
+        - name: merge_pages_filesort_rejected
+          source: {schema: application, name: merge_rows}
+          projection:
+            - {kind: field, field: a}
+            - {kind: field, field: b}
+            - {kind: field, field: id, alias: filesort_rejected}
+          filter:
+            kind: group
+            operator: or
+            expressions:
+              - {kind: predicate, field: a, operator: eq, value_types: [integer]}
+              - {kind: predicate, field: b, operator: eq, value_types: [integer]}
+          order_by:
+            - {field: a, direction: asc}
+            - {field: b, direction: asc}
+            - {field: id, direction: asc}
+          maximum_limit: 100
+          required_index: idx_a
+          maximum_rows_examined_per_scan: 1000
+        - name: comma_pages_unconstrained
+          source: {schema: application, name: comma_rows}
+          projection:
+            - {kind: field, field: id, alias: comma_unconstrained}
+            - {kind: field, field: a}
+          filter:
+            kind: predicate
+            field: a
+            operator: eq
+            value_types: [integer]
+          order_by:
+            - {field: id, direction: asc}
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 1000
+        - name: comma_pages_prefix
+          source: {schema: application, name: comma_rows}
+          projection:
+            - {kind: field, field: id, alias: comma_prefix}
+            - {kind: field, field: a}
+          filter:
+            kind: predicate
+            field: a
+            operator: eq
+            value_types: [integer]
+          order_by:
+            - {field: id, direction: asc}
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 1000
+          required_index: idx_a
+        - name: comma_pages_suffix
+          source: {schema: application, name: comma_rows}
+          projection:
+            - {kind: field, field: id, alias: comma_suffix}
+            - {kind: field, field: a}
+          filter:
+            kind: predicate
+            field: a
+            operator: eq
+            value_types: [integer]
+          order_by:
+            - {field: id, direction: asc}
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 1000
+          required_index: idx_b
+        - name: ambiguous_pages_unconstrained
+          source: {schema: application, name: ambiguous_merge_rows}
+          projection:
+            - {kind: field, field: a}
+            - {kind: field, field: b}
+            - {kind: field, field: id, alias: ambiguous_unconstrained}
+          filter:
+            kind: group
+            operator: or
+            expressions:
+              - {kind: predicate, field: a, operator: eq, value_types: [integer]}
+              - {kind: predicate, field: b, operator: eq, value_types: [integer]}
+          order_by:
+            - {field: a, direction: asc}
+            - {field: b, direction: asc}
+            - {field: id, direction: asc}
+          maximum_limit: 100
+          maximum_rows_examined_per_scan: 1000
+          allow_filesort: true
+        - name: ambiguous_pages_prefix
+          source: {schema: application, name: ambiguous_merge_rows}
+          projection:
+            - {kind: field, field: a}
+            - {kind: field, field: b}
+            - {kind: field, field: id, alias: ambiguous_prefix}
+          filter:
+            kind: group
+            operator: or
+            expressions:
+              - {kind: predicate, field: a, operator: eq, value_types: [integer]}
+              - {kind: predicate, field: b, operator: eq, value_types: [integer]}
+          order_by:
+            - {field: a, direction: asc}
+            - {field: b, direction: asc}
+            - {field: id, direction: asc}
+          maximum_limit: 100
+          maximum_rows_examined_per_scan: 1000
+          allow_filesort: true
+          required_index: idx_a
+        - name: ambiguous_pages_suffix
+          source: {schema: application, name: ambiguous_merge_rows}
+          projection:
+            - {kind: field, field: a}
+            - {kind: field, field: b}
+            - {kind: field, field: id, alias: ambiguous_suffix}
+          filter:
+            kind: group
+            operator: or
+            expressions:
+              - {kind: predicate, field: a, operator: eq, value_types: [integer]}
+              - {kind: predicate, field: b, operator: eq, value_types: [integer]}
+          order_by:
+            - {field: a, direction: asc}
+            - {field: b, direction: asc}
+            - {field: id, direction: asc}
+          maximum_limit: 100
+          maximum_rows_examined_per_scan: 1000
+          allow_filesort: true
+          required_index: idx_b
+        - name: ambiguous_pages_actual
+          source: {schema: application, name: ambiguous_merge_rows}
+          projection:
+            - {kind: field, field: a}
+            - {kind: field, field: b}
+            - {kind: field, field: id, alias: ambiguous_actual}
+          filter:
+            kind: group
+            operator: or
+            expressions:
+              - {kind: predicate, field: a, operator: eq, value_types: [integer]}
+              - {kind: predicate, field: b, operator: eq, value_types: [integer]}
+          order_by:
+            - {field: a, direction: asc}
+            - {field: b, direction: asc}
+            - {field: id, direction: asc}
+          maximum_limit: 100
+          maximum_rows_examined_per_scan: 1000
+          allow_filesort: true
+          required_index: idx_c
+        - name: physical_alias_pages
+          source: {schema: application, name: physical_alias_view}
+          projection:
+            - {kind: field, field: id}
+            - {kind: field, field: b}
+          filter: {kind: predicate, field: b, operator: eq, value_types: [integer]}
+          order_by:
+            - {field: id, direction: asc}
+          maximum_limit: 20
+          required_index: idx_c
+          maximum_rows_examined_per_scan: 1000
+          allow_filesort: true
+    limits:
+      deadline_ms: 3000
+      max_request_bytes: 65536
+      max_projection_fields: 3
+      max_group_by_fields: 1
+      max_order_by_fields: 3
+      max_predicates: 20
+      max_expression_depth: 8
+      max_parameters: 20
+      max_rows: 100
+      max_result_bytes: 1048576
+      max_offset: 0
+      max_concurrency: 2
+  diagnostic-reader:
+    datasource: integration-mysql
+    operations:
+      - select
+      - explain_select
+      - aggregate
+      - select_keyset
+      - list_query_shapes
+      - describe_object
+    resources:
+      schemas:
+        allow:
+          - application
+      objects:
+        allow:
+          - application.diagnostic_dates
+          - application.diagnostic_slow_dates
+      fields:
+        allow:
+          - application.diagnostic_dates.*
+          - application.diagnostic_slow_dates.event_date
+        deny:
+          - application.diagnostic_dates.hidden_date
+    query:
+      allow_source_text: true
+      allow_filtering: true
+      allow_group_by: true
+      allow_sorting: true
+      allowed_filter_operators:
+        - eq
+        - gte
+        - in
+        - like
+        - is_null
+        - is_not_null
+      allowed_aggregates:
+        - count
+        - count_distinct
+      aggregate_shapes:
+        - name: diagnostic_date_counts
+          mode: grouped
+          source:
+            schema: application
+            name: diagnostic_dates
+          projection:
+            - kind: dimension
+              field: event_date
+              representation: source_text
+            - kind: measure
+              function: count_all
+              alias: total
+          order_by:
+            - kind: dimension
+              field: event_date
+              representation: source_text
+              direction: asc
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: diagnostic_date_counts_work_denied
+          mode: grouped
+          source:
+            schema: application
+            name: diagnostic_dates
+          projection:
+            - kind: dimension
+              field: event_date
+              representation: source_text
+            - kind: measure
+              function: count_all
+              alias: total_work_denied
+          order_by:
+            - kind: dimension
+              field: event_date
+              representation: source_text
+              direction: asc
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+        - name: diagnostic_date_counts_estimate_denied
+          mode: grouped
+          source:
+            schema: application
+            name: diagnostic_dates
+          projection:
+            - kind: dimension
+              field: event_date
+              representation: source_text
+            - kind: measure
+              function: count_all
+              alias: total_estimate_denied
+          order_by:
+            - kind: dimension
+              field: event_date
+              representation: source_text
+              direction: asc
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 1
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: diagnostic_date_eq
+          mode: scalar
+          source:
+            schema: application
+            name: diagnostic_dates
+          projection:
+            - kind: measure
+              function: count_all
+              alias: total
+          filter:
+            kind: predicate
+            field: event_date
+            representation: source_text
+            operator: eq
+            value_types:
+              - string
+          maximum_rows_examined_per_scan: 100
+        - name: diagnostic_date_gte
+          mode: scalar
+          source:
+            schema: application
+            name: diagnostic_dates
+          projection:
+            - kind: measure
+              function: count_all
+              alias: total
+          filter:
+            kind: predicate
+            field: event_date
+            representation: source_text
+            operator: gte
+            value_types:
+              - string
+          maximum_rows_examined_per_scan: 100
+        - name: diagnostic_date_in
+          mode: scalar
+          source:
+            schema: application
+            name: diagnostic_dates
+          projection:
+            - kind: measure
+              function: count_all
+              alias: total
+          filter:
+            kind: predicate
+            field: event_date
+            representation: source_text
+            operator: in
+            value_types:
+              - string
+              - string
+          maximum_rows_examined_per_scan: 100
+        - name: diagnostic_date_like
+          mode: scalar
+          source:
+            schema: application
+            name: diagnostic_dates
+          projection:
+            - kind: measure
+              function: count_all
+              alias: total
+          filter:
+            kind: predicate
+            field: event_date
+            representation: source_text
+            operator: like
+            value_types:
+              - string
+          maximum_rows_examined_per_scan: 100
+        - name: diagnostic_date_is_null
+          mode: scalar
+          source:
+            schema: application
+            name: diagnostic_dates
+          projection:
+            - kind: measure
+              function: count_all
+              alias: total
+          filter:
+            kind: predicate
+            field: optional_date
+            representation: source_text
+            operator: is_null
+            value_types: []
+          maximum_rows_examined_per_scan: 100
+        - name: diagnostic_timestamp_eq
+          mode: scalar
+          source:
+            schema: application
+            name: diagnostic_dates
+          projection:
+            - kind: measure
+              function: count_all
+              alias: total
+          filter:
+            kind: predicate
+            field: occurred_at
+            representation: source_text
+            operator: eq
+            value_types:
+              - string
+          maximum_rows_examined_per_scan: 100
+        - name: diagnostic_timestamp_counts
+          mode: grouped
+          source:
+            schema: application
+            name: diagnostic_dates
+          projection:
+            - kind: dimension
+              field: occurred_at
+              representation: source_text
+            - kind: measure
+              function: count_all
+              alias: total
+          order_by:
+            - kind: dimension
+              field: occurred_at
+              representation: source_text
+              direction: asc
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+      keyset_select_shapes:
+        - name: diagnostic_event_date_asc
+          source:
+            schema: application
+            name: diagnostic_dates
+          projection:
+            - kind: field
+              field: event_date
+              representation: source_text
+            - kind: field
+              field: id
+            - kind: field
+              field: optional_date
+              representation: source_text
+          order_by:
+            - field: event_date
+              direction: asc
+              representation: source_text
+            - field: id
+              direction: asc
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: diagnostic_event_date_desc
+          source:
+            schema: application
+            name: diagnostic_dates
+          projection:
+            - kind: field
+              field: event_date
+              representation: source_text
+            - kind: field
+              field: id
+            - kind: field
+              field: optional_date
+              representation: source_text
+          order_by:
+            - field: event_date
+              direction: desc
+              representation: source_text
+            - field: id
+              direction: desc
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: diagnostic_wall_time_asc
+          source:
+            schema: application
+            name: diagnostic_dates
+          projection:
+            - kind: field
+              field: wall_time
+              representation: source_text
+            - kind: field
+              field: id
+            - kind: field
+              field: optional_date
+              representation: source_text
+          order_by:
+            - field: wall_time
+              direction: asc
+              representation: source_text
+            - field: id
+              direction: asc
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: diagnostic_wall_time_desc
+          source:
+            schema: application
+            name: diagnostic_dates
+          projection:
+            - kind: field
+              field: wall_time
+              representation: source_text
+            - kind: field
+              field: id
+            - kind: field
+              field: optional_date
+              representation: source_text
+          order_by:
+            - field: wall_time
+              direction: desc
+              representation: source_text
+            - field: id
+              direction: desc
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: diagnostic_occurred_at_asc
+          source:
+            schema: application
+            name: diagnostic_dates
+          projection:
+            - kind: field
+              field: occurred_at
+              representation: source_text
+            - kind: field
+              field: id
+            - kind: field
+              field: optional_date
+              representation: source_text
+          order_by:
+            - field: occurred_at
+              direction: asc
+              representation: source_text
+            - field: id
+              direction: asc
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: diagnostic_occurred_at_desc
+          source:
+            schema: application
+            name: diagnostic_dates
+          projection:
+            - kind: field
+              field: occurred_at
+              representation: source_text
+            - kind: field
+              field: id
+            - kind: field
+              field: optional_date
+              representation: source_text
+          order_by:
+            - field: occurred_at
+              direction: desc
+              representation: source_text
+            - field: id
+              direction: desc
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_temporary_table: true
+          allow_filesort: true
+        - name: diagnostic_calendar_by_id
+          source:
+            schema: application
+            name: diagnostic_dates
+          projection:
+            - kind: field
+              field: id
+            - kind: field
+              field: event_date
+            - kind: field
+              field: wall_time
+          filter:
+            kind: predicate
+            field: id
+            operator: eq
+            value_types:
+              - integer
+          order_by:
+            - field: id
+              direction: asc
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+        - name: diagnostic_calendar_by_date
+          source:
+            schema: application
+            name: diagnostic_dates
+          projection:
+            - kind: field
+              field: event_date
+            - kind: field
+              field: id
+          filter:
+            kind: predicate
+            field: event_date
+            operator: gte
+            value_types:
+              - date
+          order_by:
+            - field: event_date
+              direction: asc
+            - field: id
+              direction: asc
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_filesort: true
+        - name: diagnostic_calendar_by_datetime
+          source:
+            schema: application
+            name: diagnostic_dates
+          projection:
+            - kind: field
+              field: wall_time
+            - kind: field
+              field: id
+          filter:
+            kind: predicate
+            field: wall_time
+            operator: gte
+            value_types:
+              - datetime
+          order_by:
+            - field: wall_time
+              direction: asc
+            - field: id
+              direction: asc
+          maximum_limit: 20
+          maximum_rows_examined_per_scan: 100
+          allow_filesort: true
+    limits:
+      deadline_ms: 3000
+      max_request_bytes: 65536
+      max_projection_fields: 6
+      max_group_by_fields: 1
+      max_order_by_fields: 3
+      max_predicates: 20
+      max_expression_depth: 8
+      max_parameters: 30
+      max_rows: 100
+      max_result_bytes: 1048576
+      max_offset: 100
+      max_concurrency: 2

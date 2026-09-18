@@ -1,0 +1,1344 @@
+---
+openapi: 3.1.0
+info:
+  title: Quordon API
+  version: 1.5.0
+  description: >-
+    Policy-controlled gateway for agent access to infrastructure. The current
+    MVP accepts a structured QuerySpec, never raw SQL, and implements
+    policy-filtered schema, table-statistics and query-shape discovery, bounded
+    SELECT, bounded curated
+    aggregates, and JSON EXPLAIN for MySQL 8.x
+    (>= 8.0 and < 9.0). MariaDB is not supported.
+    One process implements one API major version; a border proxy may add a
+    public version prefix.
+
+security:
+  - basicAuth: []
+
+servers:
+  - url: /
+    description: Current Quordon process; no version prefix is used internally.
+
+tags:
+  - name: Health
+    description: Unauthenticated process health checks.
+  - name: Discovery
+    description: Principal-scoped service capabilities.
+  - name: Schemas
+    description: Policy-filtered table, view and column metadata.
+  - name: Queries
+    description: Policy-authorized structured query operations.
+
+paths:
+  /health/live:
+    get:
+      operationId: getLiveness
+      summary: Check process liveness
+      description: Does not contact MySQL or other external dependencies.
+      tags: [Health]
+      security: []
+      responses:
+        "200":
+          description: Process is alive.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+
+  /health/ready:
+    get:
+      operationId: getReadiness
+      summary: Check service readiness
+      description: >-
+        Checks credentials, the audit sink, required datasources, and that each
+        required mysql8 datasource reports a supported MySQL 8.x server.
+      tags: [Health]
+      security: []
+      responses:
+        "200":
+          description: Service and its required dependencies are ready.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /capabilities:
+    get:
+      operationId: getCapabilities
+      summary: Get effective capabilities
+      description: Returns only profiles assigned to the authenticated principal.
+      tags: [Discovery]
+      responses:
+        "200":
+          description: Capabilities visible to the authenticated principal.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Capabilities"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /query-shapes:
+    $ref: "./query-shapes.yaml#/paths/~1query-shapes"
+
+  /schemas/{schema}/objects:
+    get:
+      operationId: listSchemaObjects
+      summary: List allowed tables and views
+      description: >-
+        Returns tables and views that are visible through the
+        selected profile. Policy-denied objects are omitted before
+        applying the effective result-byte limit, so hidden metadata does not
+        consume the profile budget. Metadata responses are never partial. The
+        query parameter set is closed: profile must occur exactly once and any
+        additional or repeated query parameter and any profile that is not
+        valid UTF-8 produces 400 INVALID_REQUEST. This strictness is an
+        application semantic represented by the
+        x-quordon-strict-query-parameters extension because OpenAPI parameter
+        objects do not define a closed query-string object.
+      x-quordon-strict-query-parameters: true
+      tags: [Schemas]
+      parameters:
+        - $ref: "#/components/parameters/SchemaName"
+        - $ref: "#/components/parameters/Profile"
+      responses:
+        "200":
+          description: Complete policy-filtered object list.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectListResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/TooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+
+  /schemas/{schema}/objects/{object}:
+    get:
+      operationId: describeSchemaObject
+      summary: Describe an allowed table or view
+      description: >-
+        Returns only columns visible through the selected profile. A missing,
+        denied, or non-table object produces the same NOT_FOUND response. The
+        effective result-byte limit applies after policy filtering; metadata
+        responses are never partial. The query parameter set is closed: profile
+        must occur exactly once and any additional or repeated query parameter,
+        or a profile that is not valid UTF-8, produces 400 INVALID_REQUEST. This
+        strictness is an application semantic
+        represented by the x-quordon-strict-query-parameters extension because
+        OpenAPI parameter objects do not define a closed query-string object.
+      x-quordon-strict-query-parameters: true
+      tags: [Schemas]
+      parameters:
+        - $ref: "#/components/parameters/SchemaName"
+        - $ref: "#/components/parameters/ObjectName"
+        - $ref: "#/components/parameters/Profile"
+      responses:
+        "200":
+          description: Policy-filtered object description.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObjectDescriptionResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/TooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+
+  /schemas/{schema}/objects/{object}/statistics:
+    x-quordon-contract-module: ./table-statistics.yaml
+    $ref: "./table-statistics.yaml#/paths/~1schemas~1{schema}~1objects~1{object}~1statistics"
+
+  /queries/explain:
+    post:
+      operationId: explainSelect
+      summary: Explain a structured select query
+      description: >-
+        Compiles an authorized QuerySpec and runs MySQL 8 EXPLAIN FORMAT=JSON.
+        The source is a policy-authorized table or trusted view. Unknown objects
+        are rejected with UNSUPPORTED_QUERY. View definitions and dependencies
+        are trusted administrator input; deny rules apply to requested-object fields.
+        MySQL requires SHOW VIEW for EXPLAIN views; SELECT-only datasource
+        credentials produce 503 DATABASE_UNAVAILABLE for an authorized view.
+      tags: [Queries]
+      requestBody:
+        required: true
+        description: A profile name and portable, structured QuerySpec.
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QueryRequest"
+      responses:
+        "200":
+          description: MySQL 8 JSON execution plan for an authorized QuerySpec.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExplainResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/TooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+
+  /queries/select:
+    post:
+      operationId: executeSelect
+      summary: Execute a bounded structured select query
+      description: >-
+        Executes either the legacy bounded field-only SELECT or a separately
+        authorized policy-curated keyset SELECT. The request and success
+        response branches are disjoint; keyset behavior is defined by the
+        executable keyset-pagination contract module.
+      x-quordon-capabilities: [select, select_keyset]
+      x-quordon-contract-module: ./keyset-pagination.yaml
+      tags: [Queries]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "./keyset-pagination.yaml#/components/schemas/SelectRequestVNext"
+      responses:
+        "200":
+          description: Legacy or keyset SELECT result matching the request branch.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "./keyset-pagination.yaml#/components/schemas/SelectResultVNext"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "./keyset-pagination.yaml#/components/responses/SelectMethodNotAllowed"
+        "413":
+          $ref: "#/components/responses/TooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+
+  /queries/aggregate:
+    post:
+      operationId: executeAggregate
+      summary: Execute a bounded curated aggregate query
+      description: >-
+        Executes one policy-authorized scalar or grouped aggregate shape over
+        a configured table or trusted view. The complete execution invariants and
+        schemas are defined in the aggregate contract module. The client never
+        selects an index, SQL expression, source-work bound, or execution plan.
+        MySQL requires SHOW VIEW for view plan preflight; SELECT-only datasource
+        credentials produce 503 DATABASE_UNAVAILABLE before the main SELECT.
+      x-quordon-capability: aggregate
+      x-quordon-contract-module: ./aggregate.yaml
+      tags: [Queries]
+      requestBody:
+        required: true
+        description: A profile name and a strictly typed aggregate query.
+        content:
+          application/json:
+            schema:
+              $ref: "./aggregate.yaml#/components/schemas/AggregateRequest"
+      responses:
+        "200":
+          description: Bounded aggregate rows with portable column metadata.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "./aggregate.yaml#/components/schemas/AggregateResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/TooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/Unprocessable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+        "504":
+          $ref: "#/components/responses/Timeout"
+
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+      description: HTTP Basic Auth on every application request. Quordon does not terminate TLS; remote deployments must terminate HTTPS at an external ingress.
+
+  headers:
+    RequestId:
+      description: Server-generated request correlation identifier.
+      schema:
+        type: string
+
+  parameters:
+    Profile:
+      name: profile
+      in: query
+      required: true
+      description: >-
+        Assigned server-side policy profile. On metadata operations this
+        parameter must occur exactly once; repeated occurrences are rejected
+        with 400 INVALID_REQUEST, as is a percent-decoded value that is not
+        valid UTF-8.
+      schema:
+        type: string
+        minLength: 1
+    SchemaName:
+      description: Portable logical schema identifier.
+      name: schema
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Identifier"
+    ObjectName:
+      description: Portable table or view identifier.
+      name: object
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Identifier"
+
+  responses:
+    BadRequest:
+      description: Malformed JSON or invalid HTTP request.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Missing or invalid HTTP Basic credentials.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+        WWW-Authenticate:
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Policy denied the profile, operation, resource, or field.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: The object is missing or denied by policy.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TooLarge:
+      description: A configured request or result size limit was exceeded.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    UnsupportedMediaType:
+      description: The request body media type is not application/json.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            code: UNSUPPORTED_MEDIA_TYPE
+            message: Content-Type must be application/json
+            request_id: req-0123456789abcdef
+            policy_version: "1"
+    Unprocessable:
+      description: The structured query is invalid or unsupported.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    UpstreamError:
+      description: MySQL rejected or failed the generated statement.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InternalError:
+      description: An internal service error occurred.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotImplemented:
+      description: The selected adapter does not implement this endpoint capability.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unavailable:
+      description: Concurrency capacity is exhausted or a required dependency is unavailable.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Timeout:
+      description: The database operation exceeded its deadline.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Health:
+      description: Minimal liveness or readiness response.
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
+
+    Error:
+      description: Sanitized error response that never includes SQL, DSNs, or driver errors.
+      type: object
+      additionalProperties: false
+      required: [code, message, request_id]
+      properties:
+        code:
+          $ref: "#/components/schemas/ErrorCode"
+        message:
+          type: string
+        request_id:
+          type: string
+        policy_version:
+          type: string
+
+    ErrorCode:
+      description: Stable machine-readable error code emitted by API version 1 or reserved for its documented lifecycle operations.
+      type: string
+      enum:
+        - AUTHENTICATION_REQUIRED
+        - INVALID_CREDENTIALS
+        - METHOD_NOT_ALLOWED
+        - DENIED_OPERATION
+        - DENIED_RESOURCE
+        - DENIED_FIELD
+        - DENIED_QUERY_FEATURE
+        - INVALID_REQUEST
+        - UNSUPPORTED_MEDIA_TYPE
+        - REQUEST_TOO_LARGE
+        - RESULT_TOO_LARGE
+        - UNSUPPORTED_QUERY
+        - CAPABILITY_NOT_IMPLEMENTED
+        - QUERY_CONFLICT
+        - QUERY_TIMEOUT
+        - CAPACITY_EXCEEDED
+        - SERVICE_UNAVAILABLE
+        - DATABASE_UNAVAILABLE
+        - UPSTREAM_ERROR
+        - NOT_FOUND
+        - INTERNAL_ERROR
+
+    Capabilities:
+      description: Effective MVP capabilities for the authenticated principal.
+      type: object
+      additionalProperties: false
+      required: [api_version, service_version, policy_version, profiles]
+      properties:
+        api_version:
+          type: string
+          const: "1"
+        service_version:
+          type: string
+        policy_version:
+          type: string
+        profiles:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProfileCapability"
+
+    ProfileCapability:
+      description: An assigned profile intersected with MySQL adapter capabilities.
+      type: object
+      additionalProperties: false
+      required: [name, datasource, adapter, operations, limits]
+      properties:
+        name:
+          type: string
+        datasource:
+          type: string
+        adapter:
+          type: string
+          const: mysql8
+        operations:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum: [list_objects, describe_object, describe_object_statistics, explain_select, select, select_keyset, aggregate, list_query_shapes]
+        limits:
+          $ref: "#/components/schemas/Limits"
+
+    QueryRequest:
+      description: Request envelope selecting one server-side policy profile.
+      type: object
+      additionalProperties: false
+      required: [profile, query]
+      properties:
+        profile:
+          type: string
+          minLength: 1
+        query:
+          $ref: "#/components/schemas/QuerySpec"
+
+    SelectRequest:
+      description: Request envelope for the field-only executable SELECT subset.
+      type: object
+      additionalProperties: false
+      required: [profile, query]
+      properties:
+        profile:
+          type: string
+          minLength: 1
+        query:
+          $ref: "#/components/schemas/SimpleSelectQuerySpec"
+
+    SimpleSelectQuerySpec:
+      description: >-
+        Executable single-table SELECT subset. Projection accepts only source
+        fields; aggregates and group_by are deliberately unavailable.
+      type: object
+      additionalProperties: false
+      required: [source, projection]
+      properties:
+        source:
+          $ref: "#/components/schemas/ResourceRef"
+        projection:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/FieldSelection"
+        filter:
+          $ref: "#/components/schemas/FilterExpression"
+        order_by:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/Sort"
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+        offset:
+          type: integer
+          minimum: 0
+          maximum: 1000000000
+
+    QuerySpec:
+      description: >-
+        Portable single-source query description. EXPLAIN supports the full
+        shape; executable SELECT uses the narrower SimpleSelectQuerySpec. The
+        source may be a configured table or trusted view with columns.
+      type: object
+      additionalProperties: false
+      required: [source, projection]
+      properties:
+        source:
+          $ref: "#/components/schemas/ResourceRef"
+        projection:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/Selection"
+        filter:
+          $ref: "#/components/schemas/FilterExpression"
+        group_by:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/Identifier"
+        order_by:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/Sort"
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+        offset:
+          type: integer
+          minimum: 0
+          maximum: 1000000000
+
+      allOf:
+        - if:
+            anyOf:
+              - required: [group_by]
+                properties:
+                  group_by: {minItems: 1}
+              - properties:
+                  projection:
+                    contains:
+                      properties:
+                        kind: {const: aggregate}
+                      required: [kind]
+          then:
+            properties:
+              projection:
+                items:
+                  not:
+                    required: [representation]
+
+    ResourceRef:
+      description: >-
+        Logical schema and object selected by the query. Tables and trusted
+        views are supported; administrators own the safety of view definitions.
+      type: object
+      additionalProperties: false
+      required: [schema, name]
+      properties:
+        schema:
+          $ref: "#/components/schemas/Identifier"
+        name:
+          $ref: "#/components/schemas/Identifier"
+
+    Identifier:
+      description: Portable SQL identifier; it is always quoted by the DBMS adapter.
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+
+    Selection:
+      description: A projected field or allowlisted aggregate.
+      oneOf:
+        - $ref: "#/components/schemas/FieldSelection"
+        - $ref: "#/components/schemas/AggregateSelection"
+      discriminator:
+        propertyName: kind
+        mapping:
+          field: "#/components/schemas/FieldSelection"
+          aggregate: "#/components/schemas/AggregateSelection"
+
+    FieldSelection:
+      description: A projected source field.
+      type: object
+      additionalProperties: false
+      required: [kind, field]
+      properties:
+        representation:
+          description: Explicit native temporal text; omitted for ordinary representation.
+          type: string
+          const: source_text
+        kind:
+          type: string
+          const: field
+        field:
+          $ref: "#/components/schemas/Identifier"
+        alias:
+          $ref: "#/components/schemas/Identifier"
+
+    AggregateSelection:
+      description: An allowlisted aggregate projection.
+      oneOf:
+        - $ref: "#/components/schemas/CountAggregateSelection"
+        - $ref: "#/components/schemas/FieldAggregateSelection"
+      discriminator:
+        propertyName: function
+        mapping:
+          count: "#/components/schemas/CountAggregateSelection"
+          min: "#/components/schemas/FieldAggregateSelection"
+          max: "#/components/schemas/FieldAggregateSelection"
+          sum: "#/components/schemas/FieldAggregateSelection"
+          avg: "#/components/schemas/FieldAggregateSelection"
+
+    CountAggregateSelection:
+      description: COUNT(*) or COUNT(field) projection.
+      type: object
+      additionalProperties: false
+      required: [kind, function]
+      properties:
+        kind:
+          type: string
+          const: aggregate
+        function:
+          type: string
+          const: count
+        field:
+          $ref: "#/components/schemas/Identifier"
+        alias:
+          $ref: "#/components/schemas/Identifier"
+
+    FieldAggregateSelection:
+      description: Aggregate projection that requires a source field.
+      type: object
+      additionalProperties: false
+      required: [kind, function, field]
+      properties:
+        kind:
+          type: string
+          const: aggregate
+        function:
+          type: string
+          enum: [min, max, sum, avg]
+        field:
+          $ref: "#/components/schemas/Identifier"
+        alias:
+          $ref: "#/components/schemas/Identifier"
+
+    FilterExpression:
+      description: A recursive, bounded predicate expression.
+      oneOf:
+        - $ref: "#/components/schemas/FilterPredicate"
+        - $ref: "#/components/schemas/FilterGroup"
+      discriminator:
+        propertyName: kind
+        mapping:
+          predicate: "#/components/schemas/FilterPredicate"
+          group: "#/components/schemas/FilterGroup"
+
+    FilterPredicate:
+      description: A field comparison whose values are always bound parameters.
+      oneOf:
+        - $ref: "#/components/schemas/SingleValueFilterPredicate"
+        - $ref: "#/components/schemas/SetFilterPredicate"
+        - $ref: "#/components/schemas/NullFilterPredicate"
+      discriminator:
+        propertyName: operator
+        mapping:
+          eq: "#/components/schemas/SingleValueFilterPredicate"
+          ne: "#/components/schemas/SingleValueFilterPredicate"
+          lt: "#/components/schemas/SingleValueFilterPredicate"
+          lte: "#/components/schemas/SingleValueFilterPredicate"
+          gt: "#/components/schemas/SingleValueFilterPredicate"
+          gte: "#/components/schemas/SingleValueFilterPredicate"
+          like: "#/components/schemas/SingleValueFilterPredicate"
+          in: "#/components/schemas/SetFilterPredicate"
+          not_in: "#/components/schemas/SetFilterPredicate"
+          is_null: "#/components/schemas/NullFilterPredicate"
+          is_not_null: "#/components/schemas/NullFilterPredicate"
+
+    SingleValueFilterPredicate:
+      description: A comparison that requires exactly one bound value.
+      type: object
+      additionalProperties: false
+      required: [kind, field, operator, values]
+      properties:
+        representation:
+          description: Explicit native temporal text; omitted for ordinary representation.
+          type: string
+          const: source_text
+        kind:
+          type: string
+          const: predicate
+        field:
+          $ref: "#/components/schemas/Identifier"
+        operator:
+          type: string
+          enum: [eq, ne, lt, lte, gt, gte, like]
+        values:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            $ref: "#/components/schemas/TypedValue"
+
+      if:
+        required: [representation]
+      then:
+        properties:
+          values:
+            items:
+              $ref: "#/components/schemas/StringTypedValue"
+
+    SetFilterPredicate:
+      description: A set comparison that requires at least one bound value.
+      type: object
+      additionalProperties: false
+      required: [kind, field, operator, values]
+      properties:
+        representation:
+          description: Explicit native temporal text; omitted for ordinary representation.
+          type: string
+          const: source_text
+        kind:
+          type: string
+          const: predicate
+        field:
+          $ref: "#/components/schemas/Identifier"
+        operator:
+          type: string
+          enum: [in, not_in]
+        values:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/TypedValue"
+
+      if:
+        required: [representation]
+      then:
+        properties:
+          values:
+            items:
+              $ref: "#/components/schemas/StringTypedValue"
+
+    NullFilterPredicate:
+      description: A null check that does not accept bound values.
+      type: object
+      additionalProperties: false
+      required: [kind, field, operator, values]
+      properties:
+        representation:
+          description: Explicit native temporal text; omitted for ordinary representation.
+          type: string
+          const: source_text
+        kind:
+          type: string
+          const: predicate
+        field:
+          $ref: "#/components/schemas/Identifier"
+        operator:
+          type: string
+          enum: [is_null, is_not_null]
+        values:
+          type: array
+          maxItems: 0
+
+      if:
+        required: [representation]
+      then:
+        properties:
+          values:
+            items:
+              $ref: "#/components/schemas/StringTypedValue"
+
+    FilterGroup:
+      description: A parenthesized AND or OR expression.
+      type: object
+      additionalProperties: false
+      required: [kind, operator, expressions]
+      properties:
+        kind:
+          type: string
+          const: group
+        operator:
+          type: string
+          enum: [and, or]
+        expressions:
+          type: array
+          minItems: 2
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/FilterExpression"
+
+    TypedValue:
+      description: A bind value with an explicit portable type.
+      oneOf:
+        - $ref: "#/components/schemas/BooleanTypedValue"
+        - $ref: "#/components/schemas/IntegerTypedValue"
+        - $ref: "#/components/schemas/DecimalTypedValue"
+        - $ref: "#/components/schemas/StringTypedValue"
+        - $ref: "#/components/schemas/UUIDTypedValue"
+        - $ref: "#/components/schemas/DateTypedValue"
+        - $ref: "#/components/schemas/DateTimeTypedValue"
+        - $ref: "#/components/schemas/BytesTypedValue"
+      discriminator:
+        propertyName: type
+        mapping:
+          boolean: "#/components/schemas/BooleanTypedValue"
+          integer: "#/components/schemas/IntegerTypedValue"
+          decimal: "#/components/schemas/DecimalTypedValue"
+          string: "#/components/schemas/StringTypedValue"
+          uuid: "#/components/schemas/UUIDTypedValue"
+          date: "#/components/schemas/DateTypedValue"
+          datetime: "#/components/schemas/DateTimeTypedValue"
+          bytes: "#/components/schemas/BytesTypedValue"
+
+    BooleanTypedValue:
+      description: A JSON boolean bind value.
+      type: object
+      additionalProperties: false
+      required: [type, value]
+      properties:
+        type:
+          type: string
+          const: "boolean"
+        value:
+          type: boolean
+
+    IntegerTypedValue:
+      description: A signed 64-bit JSON integer bind value; quoted numbers are rejected.
+      type: object
+      additionalProperties: false
+      required: [type, value]
+      properties:
+        type:
+          type: string
+          const: "integer"
+        value:
+          type: integer
+          format: int64
+          minimum: -9223372036854775808
+          maximum: 9223372036854775807
+
+    DecimalTypedValue:
+      description: A finite base-10 decimal bind value. JSON numbers may use exponent notation; strings preserve an exact fixed-point representation.
+      type: object
+      additionalProperties: false
+      required: [type, value]
+      properties:
+        type:
+          type: string
+          const: "decimal"
+        value:
+          description: A finite base-10 number, optionally encoded as a string to preserve precision.
+          oneOf:
+            - type: number
+              description: A JSON number, including exponent notation such as 1e2.
+            - type: string
+              pattern: '^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$'
+
+    StringTypedValue:
+      description: A JSON string bind value.
+      type: object
+      additionalProperties: false
+      required: [type, value]
+      properties:
+        type:
+          type: string
+          const: "string"
+        value:
+          type: string
+
+    UUIDTypedValue:
+      description: A canonical UUID string bind value.
+      type: object
+      additionalProperties: false
+      required: [type, value]
+      properties:
+        type:
+          type: string
+          const: "uuid"
+        value:
+          type: string
+          pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+
+    DateTypedValue:
+      description: An RFC 3339 full-date bind value.
+      type: object
+      additionalProperties: false
+      required: [type, value]
+      properties:
+        type:
+          type: string
+          const: "date"
+        value:
+          type: string
+          pattern: '^(?:[0-9]{3}[1-9]|[0-9]{2}[1-9][0-9]|[0-9][1-9][0-9]{2}|[1-9][0-9]{3})-'
+          format: date
+
+    DateTimeTypedValue:
+      description: >-
+        An RFC 3339 date-time bind value. The `T` and `Z` separators are
+        case-insensitive as specified by RFC 3339.
+      type: object
+      additionalProperties: false
+      required: [type, value]
+      properties:
+        type:
+          type: string
+          const: "datetime"
+        value:
+          type: string
+          pattern: '^(?:[0-9]{3}[1-9]|[0-9]{2}[1-9][0-9]|[0-9][1-9][0-9]{2}|[1-9][0-9]{3})-'
+          format: date-time
+
+    BytesTypedValue:
+      description: A canonical standard base64-encoded byte sequence bind value.
+      type: object
+      additionalProperties: false
+      required: [type, value]
+      properties:
+        type:
+          type: string
+          const: "bytes"
+        value:
+          type: string
+          contentEncoding: base64
+          pattern: '^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/][AQgw]==|[A-Za-z0-9+/]{2}[AEIMQUYcgkosw048]=)?$'
+
+    Sort:
+      description: An allowlisted source field and direction. In a grouped or aggregate query the field must also occur in group_by.
+      type: object
+      additionalProperties: false
+      required: [field, direction]
+      properties:
+        representation:
+          description: Explicit native temporal text; omitted for ordinary representation.
+          type: string
+          const: source_text
+        field:
+          $ref: "#/components/schemas/Identifier"
+        direction:
+          type: string
+          enum: [asc, desc]
+
+    Limits:
+      description: Effective hard and profile resource limits applied to the operation.
+      type: object
+      additionalProperties: false
+      required:
+        - deadline_ms
+        - max_request_bytes
+        - max_projection_fields
+        - max_group_by_fields
+        - max_order_by_fields
+        - max_predicates
+        - max_expression_depth
+        - max_parameters
+        - max_rows
+        - max_result_bytes
+        - max_offset
+        - max_concurrency
+      properties:
+        deadline_ms: {type: integer, minimum: 1, maximum: 300000}
+        max_request_bytes: {type: integer, minimum: 1, maximum: 16777216}
+        max_projection_fields: {type: integer, minimum: 1, maximum: 100}
+        max_group_by_fields: {type: integer, minimum: 1, maximum: 100}
+        max_order_by_fields: {type: integer, minimum: 1, maximum: 100}
+        max_predicates: {type: integer, minimum: 1, maximum: 10000}
+        max_expression_depth: {type: integer, minimum: 1, maximum: 64}
+        max_parameters: {type: integer, minimum: 2, maximum: 10000}
+        max_rows: {type: integer, minimum: 1, maximum: 1000000}
+        max_result_bytes: {type: integer, minimum: 1, maximum: 16777216}
+        max_offset: {type: integer, minimum: 0, maximum: 1000000000}
+        max_concurrency: {type: integer, minimum: 1, maximum: 1024}
+
+    ExplainResult:
+      description: Vendor plan and policy context returned by MySQL 8 JSON EXPLAIN.
+      type: object
+      additionalProperties: false
+      required:
+        - query_id
+        - policy_profile
+        - policy_version
+        - datasource
+        - adapter
+        - format
+        - plan
+        - limits
+        - warnings
+      properties:
+        query_id:
+          type: string
+        policy_profile:
+          type: string
+        policy_version:
+          type: string
+        datasource:
+          type: string
+        adapter:
+          type: string
+          const: mysql8
+        format:
+          type: string
+          const: mysql_json
+        plan:
+          type: object
+        limits:
+          $ref: "#/components/schemas/Limits"
+        warnings:
+          type: array
+          items:
+            type: string
+
+    ObjectListResult:
+      description: Complete list of tables and views visible through one profile.
+      type: object
+      additionalProperties: false
+      required: [policy_profile, policy_version, datasource, adapter, schema, objects]
+      properties:
+        policy_profile:
+          type: string
+        policy_version:
+          type: string
+        datasource:
+          type: string
+        adapter:
+          type: string
+          const: mysql8
+        schema:
+          $ref: "#/components/schemas/Identifier"
+        objects:
+          type: array
+          items:
+            $ref: "#/components/schemas/SchemaObject"
+
+    SchemaObject:
+      description: A policy-visible table or view.
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          $ref: "#/components/schemas/Identifier"
+
+    ObjectDescriptionResult:
+      description: Policy-filtered object metadata.
+      type: object
+      additionalProperties: false
+      required: [policy_profile, policy_version, datasource, adapter, schema, name, columns]
+      properties:
+        policy_profile:
+          type: string
+        policy_version:
+          type: string
+        datasource:
+          type: string
+        adapter:
+          type: string
+          const: mysql8
+        schema:
+          $ref: "#/components/schemas/Identifier"
+        name:
+          $ref: "#/components/schemas/Identifier"
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/ColumnDescription"
+
+    ColumnDescription:
+      description: Portable and MySQL-native metadata for an allowed column.
+      type: object
+      additionalProperties: false
+      required: [name, type, native_type, nullable, primary_key, indexed]
+      properties:
+        name:
+          $ref: "#/components/schemas/Identifier"
+        type:
+          $ref: "#/components/schemas/PortableColumnType"
+        native_type:
+          type: string
+        nullable:
+          type: boolean
+        primary_key:
+          type: boolean
+        indexed:
+          type: boolean
+
+    PortableColumnType:
+      description: DBMS-neutral result or schema column category.
+      type: string
+      enum: [integer, decimal, string, date, datetime, time, bytes, json]
+
+    SelectResult:
+      description: >-
+        Bounded SELECT result. Rows are positional arrays corresponding to
+        columns. Exact database values are strings, SQL NULL is JSON null, and
+        binary and spatial values are base64 strings. Temporal values preserve
+        native MySQL text regardless of the datasource parseTime option.
+        truncated is true when the normalized row limit or effective
+        result-byte limit omitted additional rows. The safe prefix may contain
+        zero rows when the first row exceeds the effective budget. A single
+        MySQL logical packet above the absolute 16 MiB plus 1 KiB framing
+        allowance returns RESULT_TOO_LARGE.
+      type: object
+      additionalProperties: false
+      required:
+        - query_id
+        - policy_profile
+        - policy_version
+        - datasource
+        - adapter
+        - columns
+        - rows
+        - row_count
+        - truncated
+        - limits
+        - warnings
+      properties:
+        query_id:
+          type: string
+        policy_profile:
+          type: string
+        policy_version:
+          type: string
+        datasource:
+          type: string
+        adapter:
+          type: string
+          const: mysql8
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResultColumn"
+        rows:
+          type: array
+          items:
+            type: array
+            items:
+              type: [string, "null"]
+        row_count:
+          type: integer
+          minimum: 0
+        truncated:
+          type: boolean
+        limits:
+          $ref: "#/components/schemas/Limits"
+        warnings:
+          type: array
+          items:
+            type: string
+
+    ResultColumn:
+      description: Metadata for a positional SELECT result column.
+      type: object
+      additionalProperties: false
+      required: [name, type, encoding, nullable]
+      properties:
+        name:
+          type: string
+        type:
+          $ref: "#/components/schemas/PortableColumnType"
+        encoding:
+          type: string
+          enum: [string, base64]
+        nullable:
+          type: boolean

@@ -1,0 +1,15 @@
+.git
+.env*
+bin
+coverage
+dist
+/config/policy.yaml
+/config/policy.production.yaml
+/timebook-policy.yaml
+/quordon-timebook-analysis.md
+/secrets/
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
