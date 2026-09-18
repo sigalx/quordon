@@ -42,6 +42,10 @@ func (a *Adapter) Aggregate(
 		return database.AggregateResult{}, invalidAuthorizationError("aggregate")
 	}
 	spec := query.Query()
+	if query.ParameterCount() > query.Limits().MaxParameters {
+		return database.AggregateResult{}, &database.Error{Kind: database.ErrorInvalid}
+	}
+	boundaries := query.NumericBoundaries()
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return database.AggregateResult{}, classifyExecutionError(ctx, err)
@@ -67,11 +71,14 @@ func (a *Adapter) Aggregate(
 	if err != nil {
 		return database.AggregateResult{}, err
 	}
+	if err := validateNumericBucketSource(spec, columnsByName, boundaries); err != nil {
+		return database.AggregateResult{}, err
+	}
 	resultColumns, err := aggregateResultColumns(spec, columnsByName)
 	if err != nil {
 		return database.AggregateResult{}, err
 	}
-	statement, args, err := compileAggregate(spec, query.Limits().DeadlineMS)
+	statement, args, err := compileAggregate(spec, query.Limits().DeadlineMS, boundaries)
 	if err != nil {
 		return database.AggregateResult{}, &database.Error{Kind: database.ErrorUpstream, Err: err}
 	}
@@ -131,7 +138,7 @@ func (a *Adapter) Aggregate(
 		Mode: spec.Mode, Columns: resultColumns, Rows: make([][]*string, 0), ResultBytes: resultBytes,
 	}
 	if err := collectAggregateRowsWithSpec(
-		ctx, rows, spec, resultColumns, query.Limits().MaxResultBytes, &result,
+		ctx, rows, spec, resultColumns, query.Limits().MaxResultBytes, &result, boundaries,
 	); err != nil {
 		return database.AggregateResult{}, err
 	}
@@ -248,10 +255,17 @@ func aggregateResultColumns(
 ) ([]database.ResultColumn, error) {
 	result := make([]database.ResultColumn, len(spec.Projection))
 	for index, output := range spec.Projection {
-		if output.Kind == "dimension" || output.Kind == "time_bucket" {
+		if output.Kind == "dimension" || output.Kind == "time_bucket" || output.Kind == "numeric_bucket" {
 			column, ok := source[strings.ToLower(output.Field)]
 			if !ok {
 				return nil, &database.Error{Kind: database.ErrorInvalid}
+			}
+			if output.Kind == "numeric_bucket" {
+				if !numericBucketSourceType(column.dataType) {
+					return nil, &database.Error{Kind: database.ErrorInvalid, Err: errors.New("numeric bucket requires an exact numeric field")}
+				}
+				result[index] = database.ResultColumn{Name: output.Alias, Type: "integer", Encoding: "string", Nullable: column.nullable}
+				continue
 			}
 			if output.Kind == "time_bucket" {
 				if dataType := strings.ToUpper(strings.TrimSpace(column.dataType)); dataType != "TIMESTAMP" && dataType != "DATETIME" {
@@ -646,7 +660,12 @@ func collectAggregateRowsWithSpec(
 	columns []database.ResultColumn,
 	maxResultBytes int,
 	result *database.AggregateResult,
+	numericBuckets ...map[string][]string,
 ) error {
+	var boundaries map[string][]string
+	if len(numericBuckets) != 0 {
+		boundaries = numericBuckets[0]
+	}
 	bucketUnits := make([]string, len(columns))
 	hasTimeBucket := false
 	for index, output := range spec.Projection {
@@ -654,6 +673,18 @@ func collectAggregateRowsWithSpec(
 			bucketUnits[index] = output.Unit
 			hasTimeBucket = true
 		}
+	}
+	hasNumericBucket := queryspec.AggregateUsesNumericBucket(spec)
+	validateBuckets := func(raw []sql.RawBytes) error {
+		if hasTimeBucket {
+			if err := validateTimeBucketRow(raw, bucketUnits); err != nil {
+				return err
+			}
+		}
+		if hasNumericBucket {
+			return validateNumericBucketRow(raw, spec, columns, boundaries)
+		}
+		return nil
 	}
 	hiddenColumns := 0
 	if hasTimeBucket {
@@ -668,11 +699,11 @@ func collectAggregateRowsWithSpec(
 	provisionalPreviousBytes := 0
 	for rows.Next() {
 		if provisionalTruncatedRow {
-			if hasTimeBucket {
+			if hasTimeBucket || hasNumericBucket {
 				if err := rows.Scan(destinations...); err != nil {
 					return classifyExecutionError(ctx, err)
 				}
-				if err := validateTimeBucketRow(rawValues, bucketUnits); err != nil {
+				if err := validateBuckets(rawValues); err != nil {
 					return err
 				}
 			}
@@ -682,22 +713,22 @@ func collectAggregateRowsWithSpec(
 			continue
 		}
 		if result.Truncated {
-			if hasTimeBucket {
+			if hasTimeBucket || hasNumericBucket {
 				if err := rows.Scan(destinations...); err != nil {
 					return classifyExecutionError(ctx, err)
 				}
-				if err := validateTimeBucketRow(rawValues, bucketUnits); err != nil {
+				if err := validateBuckets(rawValues); err != nil {
 					return err
 				}
 			}
 			continue
 		}
 		if spec.Mode == queryspec.AggregateModeGrouped && len(result.Rows) == spec.Limit {
-			if hasTimeBucket {
+			if hasTimeBucket || hasNumericBucket {
 				if err := rows.Scan(destinations...); err != nil {
 					return classifyExecutionError(ctx, err)
 				}
-				if err := validateTimeBucketRow(rawValues, bucketUnits); err != nil {
+				if err := validateBuckets(rawValues); err != nil {
 					return err
 				}
 			}
@@ -710,8 +741,8 @@ func collectAggregateRowsWithSpec(
 		if err := rows.Scan(destinations...); err != nil {
 			return classifyExecutionError(ctx, err)
 		}
-		if hasTimeBucket {
-			if err := validateTimeBucketRow(rawValues, bucketUnits); err != nil {
+		if hasTimeBucket || hasNumericBucket {
+			if err := validateBuckets(rawValues); err != nil {
 				return err
 			}
 		}
@@ -832,14 +863,21 @@ func decimalDigits(value int) int {
 }
 
 func compileAggregate(
-	spec queryspec.NormalizedAggregateSpec, deadlineMS int,
+	spec queryspec.NormalizedAggregateSpec, deadlineMS int, numericBuckets ...map[string][]string,
 ) (string, []any, error) {
+	var boundaries map[string][]string
+	if len(numericBuckets) != 0 {
+		boundaries = numericBuckets[0]
+	}
+	projectionArgs := make([]any, 0)
+	groupArgs := make([]any, 0)
+	bucketArgs := make(map[string][]any)
 	projection := make([]string, len(spec.Projection))
 	dimensions := make([]string, 0)
 	bucketExpressions := make(map[string]string)
 	bucketNullnessChecks := make([]string, 0)
 	for index, output := range spec.Projection {
-		if output.Kind == "dimension" || output.Kind == "time_bucket" {
+		if output.Kind == "dimension" || output.Kind == "time_bucket" || output.Kind == "numeric_bucket" {
 			expression := representedField(qualifyAggregateField(output.Field), output.Representation, true)
 			outputName := output.Field
 			if output.Kind == "time_bucket" {
@@ -856,7 +894,29 @@ func compileAggregate(
 					"NOT (("+source+" IS NULL) <=> ("+expression+" IS NULL))",
 				)
 			}
-			projection[index] = expression + " AS " + quote(outputName)
+			if output.Kind == "numeric_bucket" {
+				var binds []any
+				var err error
+				expression, binds, err = compileNumericBucketExpression(output.Field, boundaries[output.Alias])
+				if err != nil {
+					return "", nil, err
+				}
+				outputName = output.Alias
+				bucketExpressions[output.Alias] = expression
+				bucketArgs[output.Alias] = binds
+				projectionArgs = append(projectionArgs, binds...)
+				groupArgs = append(groupArgs, binds...)
+			}
+			projectedExpression := expression
+			if output.Kind == "numeric_bucket" {
+				// Distinct prepared placeholders prevent ONLY_FULL_GROUP_BY
+				// from proving expression identity at prepare time. Every row
+				// in this CASE-defined group has the same bucket index (or
+				// NULL), so MIN preserves it exactly without weakening SQL modes.
+				projectedExpression = "MIN(" + expression + ")"
+				bucketExpressions[output.Alias] = projectedExpression
+			}
+			projection[index] = projectedExpression + " AS " + quote(outputName)
 			dimensions = append(dimensions, expression)
 			continue
 		}
@@ -889,7 +949,7 @@ func compileAggregate(
 	builder.WriteString(quote(spec.Source.Name))
 	builder.WriteString(" AS ")
 	builder.WriteString(quote(aggregateSourceAlias))
-	args := make([]any, 0)
+	args := projectionArgs
 	if spec.Filter != nil {
 		where, filterArgs, err := compileAggregateFilter(*spec.Filter)
 		if err != nil {
@@ -902,6 +962,7 @@ func compileAggregate(
 	if len(dimensions) != 0 {
 		builder.WriteString(" GROUP BY ")
 		builder.WriteString(strings.Join(dimensions, ", "))
+		args = append(args, groupArgs...)
 	}
 	if len(spec.OrderBy) != 0 {
 		terms := make([]string, len(spec.OrderBy))
@@ -909,13 +970,14 @@ func compileAggregate(
 			target := quote(order.Alias)
 			if order.Kind == "dimension" {
 				target = representedField(qualifyAggregateField(order.Field), order.Representation, true)
-			} else if order.Kind == "time_bucket" {
+			} else if order.Kind == "time_bucket" || order.Kind == "numeric_bucket" {
 				var ok bool
 				target, ok = bucketExpressions[order.Alias]
 				if !ok {
-					return "", nil, errors.New("time-bucket order target is not projected")
+					return "", nil, errors.New("bucket order target is not projected")
 				}
 			}
+			args = append(args, bucketArgs[order.Alias]...)
 			terms[index] = target + " " + strings.ToUpper(order.Direction)
 		}
 		builder.WriteString(" ORDER BY ")

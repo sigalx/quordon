@@ -201,3 +201,31 @@ ANALYZE TABLE application.diagnostic_dates;
 CREATE ALGORITHM=MERGE SQL SECURITY DEFINER VIEW application.diagnostic_slow_dates AS
 SELECT CASE WHEN SLEEP(5) = 0 THEN event_date ELSE NULL END AS event_date
 FROM application.diagnostic_dates WHERE id = 2;
+
+-- Exact fixed numeric bucket fixtures; reader grants remain SELECT-only.
+CREATE TABLE application.numeric_distribution (
+ id INT NOT NULL PRIMARY KEY,
+ signed_value BIGINT NULL,
+ unsigned_value BIGINT UNSIGNED NULL,
+ decimal_value DECIMAL(65,30) NULL,
+ float_value FLOAT NULL,
+ double_value DOUBLE NULL,
+ text_value VARCHAR(32) NULL,
+ category VARCHAR(16) NOT NULL,
+ occurred_at DATETIME NOT NULL,
+ payload TEXT NOT NULL,
+ hidden_value INT NOT NULL
+) ENGINE=InnoDB;
+INSERT INTO application.numeric_distribution VALUES (1, NULL, NULL, NULL, 1.5, 1.5, '1.5', 'all', '2026-09-18 10:00:00', 'small', 7);
+INSERT INTO application.numeric_distribution VALUES (2, -9223372036854775808, 0, -123.500000000000000000000000000001, 1.5, 1.5, '1.5', 'all', '2026-09-18 10:00:00', 'small', 7);
+INSERT INTO application.numeric_distribution VALUES (3, -2, 1, -123.5, 1.5, 1.5, '1.5', 'all', '2026-09-18 10:00:00', REPEAT('x',5000), 7);
+INSERT INTO application.numeric_distribution VALUES (4, -1, 2, -0.000000000000000000000000000001, 1.5, 1.5, '1.5', 'all', '2026-09-18 10:00:00', REPEAT('x',5000), 7);
+INSERT INTO application.numeric_distribution VALUES (5, 0, 9007199254740992, 0, 1.5, 1.5, '1.5', 'all', '2026-09-18 10:00:00', REPEAT('x',5000), 7);
+INSERT INTO application.numeric_distribution VALUES (6, 1, 9007199254740993, 0.000000000000000000000000000001, 1.5, 1.5, '1.5', 'all', '2026-09-18 10:00:00', REPEAT('x',5000), 7);
+INSERT INTO application.numeric_distribution VALUES (7, 2, 9007199254740994, 1.499999999999999999999999999999, 1.5, 1.5, '1.5', 'all', '2026-09-18 10:00:00', REPEAT('x',5000), 7);
+INSERT INTO application.numeric_distribution VALUES (8, 9007199254740992, 18446744073709551614, 1.5, 1.5, 1.5, '1.5', 'all', '2026-09-18 10:00:00', REPEAT('x',5000), 7);
+INSERT INTO application.numeric_distribution VALUES (9, 9007199254740993, 18446744073709551615, 9007199254740992.999999999999999999999999999999, 1.5, 1.5, '1.5', 'all', '2026-09-18 10:00:00', REPEAT('x',5000), 7);
+INSERT INTO application.numeric_distribution VALUES (10, 9007199254740994, 18446744073709551615, 9007199254740993, 1.5, 1.5, '1.5', 'all', '2026-09-18 10:00:00', REPEAT('x',5000), 7);
+INSERT INTO application.numeric_distribution VALUES (11, 9223372036854775807, 18446744073709551615, 99999999999999999999999999999999999.999999999999999999999999999999, 1.5, 1.5, '1.5', 'all', '2026-09-18 10:00:00', REPEAT('x',5000), 7);
+
+ANALYZE TABLE application.numeric_distribution;

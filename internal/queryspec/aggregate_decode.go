@@ -195,6 +195,13 @@ func (w aggregateOutputWire) decode() (AggregateOutput, error) {
 		if w.Function.Set || w.Alias.Set || w.Unit.Set || w.Timezone.Set {
 			return AggregateOutput{}, errors.New("dimension accepts only kind and field")
 		}
+	case "numeric_bucket":
+		if !w.Field.Set || !w.Alias.Set {
+			return AggregateOutput{}, errors.New("numeric_bucket requires field and alias")
+		}
+		if w.Function.Set || w.Unit.Set || w.Timezone.Set {
+			return AggregateOutput{}, errors.New("numeric_bucket accepts only kind, field, and alias")
+		}
 	case "time_bucket":
 		if !w.Field.Set || !w.Unit.Set || !w.Timezone.Set || !w.Alias.Set {
 			return AggregateOutput{}, errors.New("time_bucket requires field, unit, timezone, and alias")
@@ -248,9 +255,9 @@ func (w aggregateSortWire) decode() (AggregateSort, error) {
 		if !w.Alias.Set || w.Field.Set {
 			return AggregateSort{}, errors.New("measure order requires alias and forbids field")
 		}
-	case "time_bucket":
+	case "time_bucket", "numeric_bucket":
 		if !w.Alias.Set || w.Field.Set {
-			return AggregateSort{}, errors.New("time_bucket order requires alias and forbids field")
+			return AggregateSort{}, errors.New("bucket order requires alias and forbids field")
 		}
 	default:
 		return AggregateSort{}, fmt.Errorf("kind %q is not supported", w.Kind.Value)

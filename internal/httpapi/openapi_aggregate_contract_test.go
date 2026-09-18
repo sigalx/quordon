@@ -213,9 +213,14 @@ func loadAggregateContractValidator(t *testing.T) openapivalidator.Validator {
 		t.Fatal(err)
 	}
 	configuration := datamodel.NewDocumentConfiguration()
+	// Preload every modular contract file before resolving circular file refs;
+	// lazy cross-file indexing in libopenapi can deadlock. Sequential extraction
+	// retains the complete schema checks with deterministic resolution.
+	configuration.ExtractRefsSequentially = true
 	configuration.BasePath = "../../openapi"
+	configuration.LocalFS = os.DirFS("../../openapi")
 	configuration.SpecFilePath = "aggregate.yaml"
-	configuration.FileFilter = []string{"aggregate.yaml", "openapi.yaml", "table-statistics.yaml"}
+	configuration.FileFilter = []string{"openapi.yaml", "aggregate.yaml", "query-shapes.yaml", "table-statistics.yaml", "keyset-pagination.yaml"}
 	configuration.AllowFileReferences = true
 	document, err := libopenapi.NewDocumentWithConfiguration(specification, configuration)
 	if err != nil {

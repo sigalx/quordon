@@ -617,6 +617,71 @@ dimensions и повторные filters могут восстановить о�
 resources/fields профиля должны разрешать principal прямое чтение охваченных
 строк и колонок.
 
+### Numeric bucket shapes
+
+`numeric_bucket` разрешён только в grouped aggregate. Policy output содержит
+`kind`, исходный `field`, уникальный `alias` и `boundaries`: 1–64 настоящие YAML
+strings, каждая до 128 ASCII bytes, с fixed-point decimal grammar
+`^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$`. Exponent, `+`, whitespace, leading zeros,
+NaN и Infinity запрещены. Порядок проверяется точным сравнением без `float64`;
+численно равные соседние границы отклоняются. До fingerprint дробные trailing
+zeros удаляются, отрицательный ноль становится `0`.
+
+```yaml
+- name: operations_by_duration
+  mode: grouped
+  source: {schema: application, name: operations}
+  projection:
+    - kind: numeric_bucket
+      field: duration_ms
+      alias: duration_bucket
+      boundaries: ["0", "100", "500", "1000"]
+    - {kind: measure, function: count_all, alias: operations_count}
+  order_by:
+    - {kind: numeric_bucket, alias: duration_bucket, direction: asc}
+  maximum_limit: 20
+  maximum_rows_examined_per_scan: 100000
+  allow_temporary_table: true
+  allow_filesort: true
+```
+
+Оба execution controls обязательны и должны быть явными YAML booleans, включая
+`false`. Optional `required_index`, plan estimate admission, grouping/sorting
+permissions, denylist исходного поля, output collisions и effective limits
+сохраняются. Для numeric output запрещены `function`, `unit`, `timezone` и
+`representation`; `boundaries` запрещён во всех остальных output branches и
+в orders. Order numeric bucket задаётся только `kind`, `alias`, `direction`.
+Один source можно группировать несколькими numeric buckets с разными aliases.
+
+Request signature включает поле и alias, но исключает границы. Два shapes с
+одинаковой клиентской формой и разными границами блокируют startup; различать
+их можно aliases. Границы включены в redacted policy fingerprint и публичный
+discovery hash, глубоко копируются в snapshots и authorization token.
+
+Для N границ индекс 0 означает ниже первой, i — `[boundary[i−1], boundary[i])`,
+N — от последней включительно. Output имеет `type: integer`, `encoding: string`,
+nullable по исходной metadata; только DB NULL становится null. Пустые группы
+не добавляются. Подробнее о сортировке и результате — в [API](api.md).
+
+В `max_parameters` входят все повторы границ в projection, GROUP BY и numeric
+ORDER BY, filter parameters и server-owned LIMIT. Например, четыре границы с
+одним numeric order без filter требуют `4 × 3 + 1 = 13` parameters.
+Конфигурация сверх effective budget отклоняется при загрузке до SQL construction.
+
+`--check-config` проверяет сборку, grammar, порядок и общие budgets без adapters,
+metadata или планов БД. Физические source types и representability границ
+проверяются MySQL adapter до EXPLAIN: точные INTEGER/DECIMAL поддерживаются,
+FLOAT/DOUBLE и нечисловые поля дают `422 UNSUPPORTED_QUERY`. Граница не обязана
+помещаться в диапазон самого источника; требуется точный MySQL
+`DECIMAL(p,s)` cast с `p ≤ 65`, `s ≤ 30`, без округления. MySQL compiler
+повторяет тот же CASE для grouping и возвращает/сортирует `MIN(CASE …)`:
+индекс одинаков внутри каждой группы, а aggregate wrapper позволяет подготовить
+statement с разными placeholders при сохранённом `ONLY_FULL_GROUP_BY`.
+
+Без cached feature `numeric_bucket_exact` execution и discovery всего профиля
+возвращают `501 CAPABILITY_NOT_IMPLEMENTED` без datasource calls. Неполный
+snapshot не публикуется; сама optional feature не блокирует readiness.
+
 ## Limits
 
 ```yaml

@@ -115,8 +115,12 @@ func New(snapshot *policy.Snapshot, databases *database.Manager, sink audit.Sink
 			discoveryNeeded[name] = cfg.Datasources[profile.Datasource].RequiredForReadiness
 		}
 		hasTimeBucket := false
+		hasNumericBucket := false
 		for _, shape := range profile.Query.AggregateShapes {
 			for _, output := range shape.Projection {
+				if output.Kind == "numeric_bucket" {
+					hasNumericBucket = true
+				}
 				if output.Kind == "time_bucket" {
 					hasTimeBucket = true
 				}
@@ -129,7 +133,8 @@ func New(snapshot *policy.Snapshot, databases *database.Manager, sink audit.Sink
 			features := databases.Features(profile.Datasource)
 			supported := (aggregateCount == 0 ||
 				slices.Contains(capabilities, domain.OperationAggregate) &&
-					(!hasTimeBucket || slices.Contains(features, domain.FeatureTimeBucketUTC))) &&
+					(!hasTimeBucket || slices.Contains(features, domain.FeatureTimeBucketUTC)) &&
+					(!hasNumericBucket || slices.Contains(features, domain.FeatureNumericBucketExact))) &&
 				(keysetCount == 0 || slices.Contains(capabilities, domain.OperationSelectKeyset))
 			queryShapeSupport[name] = configuredQueryShapeSupport{
 				datasource: profile.Datasource,

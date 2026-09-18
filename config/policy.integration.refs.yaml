@@ -2,7 +2,7 @@ $ref: './policy.integration.yaml'
 $override:
   principals:
     integration-client:
-      profiles: [query-explainer, data-reader, metadata-reader, analytics, views-reader, admission-reader, index-merge-reader, diagnostic-reader, routing-test, routing-rc, analytics-rc, admission-rc, views-rc]
+      profiles: [query-explainer, data-reader, metadata-reader, analytics, views-reader, admission-reader, index-merge-reader, diagnostic-reader, routing-test, routing-rc, analytics-rc, admission-rc, views-rc, numeric-test, numeric-rc, numeric-byte]
   datasources:
     integration-mysql:
       $ref: './policy.integration.yaml#/datasources/integration-mysql'
@@ -45,3 +45,17 @@ $override:
       $ref: './policy.integration.yaml#/profiles/views-reader'
       $override:
         datasource: integration-rc-mysql
+    numeric-test:
+      $ref: './policy.d/integration/numeric-bucket.yaml'
+    numeric-rc:
+      $ref: './policy.d/integration/numeric-bucket.yaml'
+      $override:
+        datasource: integration-rc-mysql
+    numeric-byte:
+      $ref: './policy.d/integration/numeric-bucket.yaml'
+      $override:
+        operations: [aggregate]
+        limits:
+          $ref: './policy.d/integration/numeric-bucket.yaml#/limits'
+          $override:
+            max_result_bytes: 1600

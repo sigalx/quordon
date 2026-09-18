@@ -141,7 +141,8 @@ controls.
 возвращает `403 DENIED_OPERATION`. Отсутствующая aggregate capability даёт
 `501 CAPABILITY_NOT_IMPLEMENTED`; тот же ответ без datasource call используется,
 если profile содержит `time_bucket`, а adapter не объявляет cached feature
-`time_bucket_utc`. Непостроенный или инвалидированный snapshot —
+`time_bucket_utc`, либо содержит `numeric_bucket` без feature
+`numeric_bucket_exact`. Непостроенный или инвалидированный snapshot —
 `503 SERVICE_UNAVAILABLE`. Для required datasource отсутствие snapshot делает
 `/health/ready` неготовым. Обновление snapshot в MVP выполняется только через
 перезапуск процесса.
@@ -617,6 +618,55 @@ prefix с `200` и `truncated: true`; prefix может быть пустым. �
 уже фиксированный envelope и metadata, aggregate не выполняется и возвращается
 `413`. Byte budget считается по фактически отправляемому compact JSON без
 добавочного перевода строки или иного transport whitespace.
+
+#### Фиксированные числовые распределения
+
+В grouped `/queries/aggregate` dimension `numeric_bucket` возвращает индекс
+фиксированного диапазона. Request projection содержит только `kind`, `field` и
+`alias`; границы берутся из единственного совпавшего policy shape:
+
+```json
+{
+  "profile": "analytics",
+  "query": {
+    "mode": "grouped",
+    "source": {"schema": "application", "name": "operations"},
+    "projection": [
+      {"kind": "numeric_bucket", "field": "duration_ms", "alias": "duration_bucket"},
+      {"kind": "measure", "function": "count_all", "alias": "operations_count"}
+    ],
+    "order_by": [{"kind": "numeric_bucket", "alias": "duration_bucket", "direction": "asc"}],
+    "limit": 20
+  }
+}
+```
+
+Для границ `["0", "100", "500", "1000"]` индексы `0…4` обозначают
+`(-∞, 0)`, `[0, 100)`, `[100, 500)`, `[500, 1000)` и `[1000, +∞)`.
+Колонка имеет `type: integer`, `encoding: string`, а `nullable` следует metadata
+исходной колонки. Настоящий DB NULL становится JSON null; все индексы передаются
+каноническими целыми строками. Возвращаются только непустые группы; пустой input
+даёт `rows: []`, `row_count: 0`, `truncated: false`.
+
+`asc` сортирует индексы численно с NULL первым; `desc` — с NULL последним.
+Без `order_by` порядок не гарантируется. Несколько buckets, обычные и time
+dimensions, filters и существующие measures комбинируются в точном policy shape;
+row/byte bounds сохраняются.
+
+Поддерживаются точные signed/unsigned INTEGER и DECIMAL. FLOAT/DOUBLE и
+нечисловые источники дают `422 UNSUPPORTED_QUERY` до EXPLAIN и основного SELECT.
+Дробные границы для integer-источника и границы вне его диапазона допустимы.
+MySQL 8 выбирает точный `DECIMAL(p,s)` cast отдельно для каждой границы:
+`p ≤ 65`, `s ≤ 30`. Непредставимая граница даёт такой же semantic `422`.
+Это [сохраняет точное сравнение DECIMAL с INTEGER/DECIMAL](https://dev.mysql.com/doc/refman/8.4/en/type-conversion.html).
+
+Discovery публикует `kind`, `field`, `alias`, `boundaries`; клиент при сборке
+request исключает `boundaries`, а `maximum_limit` заменяет выбранным `limit`.
+В request границы и лишние branch fields дают `400 INVALID_REQUEST`.
+Adapter без cached feature `numeric_bucket_exact` возвращает
+`501 CAPABILITY_NOT_IMPLEMENTED` для bucket execution и discovery всего
+содержащего его профиля, без datasource calls. Частичный snapshot не публикуется.
+API major остаётся `1`.
 
 ## Планируемые endpoints
 

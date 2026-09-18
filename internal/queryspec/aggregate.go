@@ -114,7 +114,7 @@ func validateAggregate(
 		if err := validateAggregateOutput(fmt.Sprintf("query.projection[%d]", index), spec.Mode, output); err != nil {
 			return ValidatedAggregate{}, err
 		}
-		if output.Kind == "dimension" || output.Kind == "time_bucket" {
+		if output.Kind == "dimension" || output.Kind == "time_bucket" || output.Kind == "numeric_bucket" {
 			dimensions++
 		} else {
 			measures++
@@ -127,7 +127,7 @@ func validateAggregate(
 		}
 		if checkOutputSemantics {
 			outputName := output.Field
-			if output.Kind == "measure" || output.Kind == "time_bucket" {
+			if output.Kind == "measure" || output.Kind == "time_bucket" || output.Kind == "numeric_bucket" {
 				outputName = output.Alias
 			}
 			outputName = strings.ToLower(outputName)
@@ -174,6 +174,7 @@ func validateAggregate(
 	if spec.Mode == AggregateModeScalar && spec.OrderBy != nil {
 		return ValidatedAggregate{}, validationError("query.order_by", "is not supported in scalar mode")
 	}
+	seenNumericOrder := make(map[string]struct{})
 	for index, order := range spec.OrderBy {
 		path := fmt.Sprintf("query.order_by[%d]", index)
 		if err := validateRepresentation(path, order.Representation); err != nil {
@@ -215,15 +216,29 @@ func validateAggregate(
 			if err := validateIdentifier(path+".alias", order.Alias); err != nil {
 				return ValidatedAggregate{}, err
 			}
-		case "time_bucket":
+		case "time_bucket", "numeric_bucket":
 			if order.Field != "" {
-				return ValidatedAggregate{}, validationError(path+".field", "is not valid for time-bucket order")
+				return ValidatedAggregate{}, validationError(path+".field", "is not valid for bucket order")
 			}
 			if err := validateIdentifier(path+".alias", order.Alias); err != nil {
 				return ValidatedAggregate{}, err
 			}
+			if checkOutputSemantics && order.Kind == "numeric_bucket" {
+				projected := false
+				for _, output := range spec.Projection {
+					projected = projected || output.Kind == "numeric_bucket" && strings.EqualFold(output.Alias, order.Alias)
+				}
+				if !projected {
+					return ValidatedAggregate{}, validationError(path+".alias", "must reference one projected numeric bucket")
+				}
+				alias := strings.ToLower(order.Alias)
+				if _, duplicate := seenNumericOrder[alias]; duplicate {
+					return ValidatedAggregate{}, validationError("query.order_by", "contains repeated numeric bucket targets")
+				}
+				seenNumericOrder[alias] = struct{}{}
+			}
 		default:
-			return ValidatedAggregate{}, validationError(path+".kind", "must be dimension, time_bucket, or measure")
+			return ValidatedAggregate{}, validationError(path+".kind", "must be dimension, time_bucket, numeric_bucket, or measure")
 		}
 	}
 
@@ -268,7 +283,7 @@ func RevalidateAggregate(
 	}
 	dimensions := 0
 	for _, output := range query.spec.Projection {
-		if output.Kind == "dimension" || output.Kind == "time_bucket" {
+		if output.Kind == "dimension" || output.Kind == "time_bucket" || output.Kind == "numeric_bucket" {
 			dimensions++
 		}
 	}
@@ -303,6 +318,7 @@ func NormalizeAggregateIdentifiers(
 	dimensions := make(map[string]Representation)
 	measures := make(map[string]struct{})
 	timeBuckets := make(map[string]struct{})
+	numericBuckets := make(map[string]struct{})
 	timeBucketFields := make(map[string]struct{})
 	for index := range normalized.Projection {
 		output := &normalized.Projection[index]
@@ -312,6 +328,9 @@ func NormalizeAggregateIdentifiers(
 		if output.Kind == "measure" {
 			name = output.Alias
 			measures[name] = struct{}{}
+		} else if output.Kind == "numeric_bucket" {
+			name = output.Alias
+			numericBuckets[name] = struct{}{}
 		} else if output.Kind == "time_bucket" {
 			name = output.Alias
 			timeBuckets[name] = struct{}{}
@@ -350,6 +369,12 @@ func NormalizeAggregateIdentifiers(
 			if _, ok := measures[order.Alias]; !ok {
 				return ValidatedAggregate{}, validationError(fmt.Sprintf("query.order_by[%d].alias", index), "must reference one projected measure")
 			}
+		} else if order.Kind == "numeric_bucket" {
+			order.Alias = canonicalIdentifier(order.Alias, true)
+			target = "numeric_bucket:" + order.Alias
+			if _, ok := numericBuckets[order.Alias]; !ok {
+				return ValidatedAggregate{}, validationError(fmt.Sprintf("query.order_by[%d].alias", index), "must reference one projected numeric bucket")
+			}
 		} else {
 			order.Alias = canonicalIdentifier(order.Alias, true)
 			target = "time_bucket:" + order.Alias
@@ -381,6 +406,14 @@ func validateAggregateOutput(path, mode string, output AggregateOutput) error {
 			return validationError(path, "dimension accepts only kind and field")
 		}
 		return validateIdentifier(path+".field", output.Field)
+	case "numeric_bucket":
+		if mode != AggregateModeGrouped || output.Function != "" || output.Unit != "" || output.Timezone != "" {
+			return validationError(path, "numeric_bucket requires grouped mode, field, and alias only")
+		}
+		if err := validateIdentifier(path+".field", output.Field); err != nil {
+			return err
+		}
+		return validateIdentifier(path+".alias", output.Alias)
 	case "time_bucket":
 		if mode != AggregateModeGrouped {
 			return validationError(path+".kind", "time_bucket is supported only in grouped mode")
@@ -422,7 +455,7 @@ func validateAggregateOutput(path, mode string, output AggregateOutput) error {
 		}
 		return nil
 	default:
-		return validationError(path+".kind", "must be dimension, time_bucket, or measure")
+		return validationError(path+".kind", "must be dimension, time_bucket, numeric_bucket, or measure")
 	}
 }
 

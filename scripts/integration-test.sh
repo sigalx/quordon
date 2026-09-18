@@ -492,6 +492,7 @@ if [ "$missing_column_status" != "422" ]; then
   exit 1
 fi
 
+python3 ./scripts/integration-numeric-bucket.py
 python3 ./scripts/integration-views.py
 python3 ./scripts/integration-index-merge.py
 python3 ./scripts/integration-source-text.py

@@ -147,6 +147,9 @@ func cloneAggregateShapes(shapes []config.AggregateShape) []config.AggregateShap
 			shape.PublicDescription = &description
 		}
 		shape.Projection = slices.Clone(shape.Projection)
+		for i := range shape.Projection {
+			shape.Projection[i].Boundaries = slices.Clone(shape.Projection[i].Boundaries)
+		}
 		shape.OrderBy = slices.Clone(shape.OrderBy)
 		shape.Filter = cloneAggregateShapeFilter(shape.Filter)
 		shape.AllowTemporaryTable = cloneBool(shape.AllowTemporaryTable)
@@ -190,6 +193,8 @@ type AuthorizedQuery struct {
 }
 
 type AuthorizedAggregate struct {
+	numericBoundaries          map[string][]string
+	parameterCount             int
 	principal                  string
 	profile                    string
 	datasource                 string
@@ -210,6 +215,18 @@ func (a AuthorizedAggregate) Operation() domain.Operation { return a.operation }
 func (a AuthorizedAggregate) Limits() domain.Limits       { return a.limits }
 func (a AuthorizedAggregate) Query() queryspec.NormalizedAggregateSpec {
 	return a.query.Spec()
+}
+
+// ParameterCount includes all policy-owned numeric bucket bind occurrences.
+func (a AuthorizedAggregate) ParameterCount() int { return a.parameterCount }
+
+// NumericBoundaries returns independent policy-owned data, keyed by normalized alias.
+func (a AuthorizedAggregate) NumericBoundaries() map[string][]string {
+	result := make(map[string][]string, len(a.numericBoundaries))
+	for alias, boundaries := range a.numericBoundaries {
+		result[alias] = slices.Clone(boundaries)
+	}
+	return result
 }
 func (a AuthorizedAggregate) RequiredIndex() string { return a.requiredIndex }
 func (a AuthorizedAggregate) MaximumRowsExaminedPerScan() uint64 {
@@ -309,15 +326,35 @@ func (s *Snapshot) AuthorizeAggregate(
 	if !ok {
 		return AuthorizedAggregate{}, &Denial{ReasonCode: ReasonDeniedQueryFeature}
 	}
-	if queryspec.AggregateUsesTimeBucket(spec) &&
+	if (queryspec.AggregateUsesTimeBucket(spec) || queryspec.AggregateUsesNumericBucket(spec)) &&
 		(shape.AllowTemporaryTable == nil || shape.AllowFilesort == nil) {
-		return AuthorizedAggregate{}, errors.New("aggregate time-bucket execution controls are missing")
+		return AuthorizedAggregate{}, errors.New("aggregate bucket execution controls are missing")
+	}
+	counts := make(map[string]int)
+	for _, output := range shape.Projection {
+		if output.Kind == "numeric_bucket" {
+			counts[strings.ToLower(output.Alias)] = len(output.Boundaries)
+		}
+	}
+	parameterCount, err := queryspec.NumericBucketParameters(spec, counts, normalized.Stats().Parameters, effectiveLimits.MaxParameters)
+	if err != nil {
+		return AuthorizedAggregate{}, err
+	}
+	boundaries := make(map[string][]string, len(counts))
+	for _, output := range shape.Projection {
+		if output.Kind == "numeric_bucket" {
+			canonical, err := queryspec.NormalizeNumericBoundaries(output.Boundaries)
+			if err != nil {
+				return AuthorizedAggregate{}, errors.New("invalid numeric bucket policy")
+			}
+			boundaries[strings.ToLower(output.Alias)] = canonical
+		}
 	}
 	allowTemporaryTable := shape.AllowTemporaryTable != nil && *shape.AllowTemporaryTable
 	allowFilesort := shape.AllowFilesort != nil && *shape.AllowFilesort
 	return AuthorizedAggregate{
 		principal: principal, profile: profileName, datasource: profile.Datasource,
-		operation: domain.OperationAggregate, limits: effectiveLimits, query: normalized,
+		operation: domain.OperationAggregate, limits: effectiveLimits, query: normalized, numericBoundaries: boundaries, parameterCount: parameterCount,
 		requiredIndex:              shape.RequiredIndex,
 		maximumRowsExaminedPerScan: shape.MaximumRowsExaminedPerScan,
 		shapeName:                  shape.Name,

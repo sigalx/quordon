@@ -408,6 +408,7 @@ type publicAggregateShapeSpec struct {
 }
 
 type publicAggregateOutput struct {
+	Boundaries     []string                 `json:"boundaries,omitempty"`
 	Representation queryspec.Representation `json:"representation,omitempty"`
 	Kind           string                   `json:"kind"`
 	Field          string                   `json:"field,omitempty"`
@@ -482,11 +483,12 @@ func buildPublicAggregateQueryShape(
 	outputNames := make(map[string]struct{}, len(shape.Projection))
 	for index, output := range shape.Projection {
 		publicOutput := publicAggregateOutput{
+			Boundaries:     slices.Clone(output.Boundaries),
 			Representation: output.Representation, Kind: output.Kind, Field: output.Field, Function: output.Function, Alias: output.Alias,
 			Unit: output.Unit, Timezone: output.Timezone,
 		}
 		name := output.Field
-		if output.Kind == "measure" || output.Kind == "time_bucket" {
+		if output.Kind == "measure" || output.Kind == "time_bucket" || output.Kind == "numeric_bucket" {
 			name = output.Alias
 		}
 		canonicalName := canonicalPolicyIdentifier(name, true)
@@ -679,6 +681,16 @@ func queryShapeSpecEncodedSize(size *boundedSize, spec publicAggregateShapeSpec)
 }
 
 func queryShapeOutputEncodedSize(size *boundedSize, output publicAggregateOutput) {
+	if len(output.Boundaries) != 0 {
+		size.add(len(`,"boundaries":[`))
+		for i, boundary := range output.Boundaries {
+			if i != 0 {
+				size.add(1)
+			}
+			size.string(boundary)
+		}
+		size.add(1)
+	}
 	if output.Representation != "" {
 		size.add(len(`,"representation":"source_text"`))
 	}
@@ -875,6 +887,19 @@ func writeJCSOutput(writer hash.Hash, output publicAggregateOutput) error {
 		if err := writeJCSString(writer, output.Alias); err != nil {
 			return err
 		}
+		separator = ","
+	}
+	if len(output.Boundaries) != 0 {
+		_, _ = io.WriteString(writer, separator+`"boundaries":[`)
+		for i, boundary := range output.Boundaries {
+			if i != 0 {
+				_, _ = io.WriteString(writer, ",")
+			}
+			if err := writeJCSString(writer, boundary); err != nil {
+				return err
+			}
+		}
+		_, _ = io.WriteString(writer, "]")
 		separator = ","
 	}
 	if output.Field != "" {

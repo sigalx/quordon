@@ -18,11 +18,11 @@ vet:
 	$(GO) vet ./...
 
 lint:
-	vacuum lint -d openapi/openapi.yaml
-	vacuum lint -d openapi/aggregate.yaml
-	vacuum lint -d openapi/query-shapes.yaml
-	vacuum lint -d openapi/table-statistics.yaml
-	vacuum lint -d openapi/keyset-pagination.yaml
+	vacuum lint -d $(abspath openapi/openapi.yaml)
+	vacuum lint -d $(abspath openapi/aggregate.yaml)
+	vacuum lint -d $(abspath openapi/query-shapes.yaml)
+	vacuum lint -d $(abspath openapi/table-statistics.yaml)
+	vacuum lint -d $(abspath openapi/keyset-pagination.yaml)
 
 verify: test vet lint verify-third-party-notices
 
