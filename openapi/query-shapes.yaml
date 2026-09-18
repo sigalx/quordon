@@ -1118,8 +1118,8 @@ components:
       required: [kind, field, alias, boundaries]
       properties:
         kind: {type: string, const: numeric_bucket}
-        field: {$ref: "./openapi.yaml#/components/schemas/Identifier"}
-        alias: {$ref: "./openapi.yaml#/components/schemas/Identifier"}
+        field: {$ref: "#/components/schemas/Identifier"}
+        alias: {$ref: "#/components/schemas/Identifier"}
         boundaries:
           description: Canonical policy-owned fixed-point decimals in strictly increasing numeric order. Omit this member when constructing an aggregate request.
           type: array
@@ -1138,7 +1138,7 @@ components:
       required: [kind, alias, direction]
       properties:
         kind: {type: string, const: numeric_bucket}
-        alias: {$ref: "./openapi.yaml#/components/schemas/Identifier"}
+        alias: {$ref: "#/components/schemas/Identifier"}
         direction: {type: string, enum: [asc, desc]}
 
     TimeBucketDimensionDiscovery:
