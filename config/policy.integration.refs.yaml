@@ -1,0 +1,47 @@
+$ref: './policy.integration.yaml'
+$override:
+  principals:
+    integration-client:
+      profiles: [query-explainer, data-reader, metadata-reader, analytics, views-reader, admission-reader, index-merge-reader, diagnostic-reader, routing-test, routing-rc, analytics-rc, admission-rc, views-rc]
+  datasources:
+    integration-mysql:
+      $ref: './policy.integration.yaml#/datasources/integration-mysql'
+    integration-rc-mysql:
+      $ref: './policy.integration.yaml#/datasources/integration-mysql'
+      $override:
+        dsn: "quordon:quordon-password@tcp(mysql-rc:3306)/?parseTime=true&interpolateParams=true&columnsWithAlias=true&collation=latin1_swedish_ci"
+  profiles:
+    query-explainer:
+      $ref: './policy.integration.yaml#/profiles/query-explainer'
+    data-reader:
+      $ref: './policy.integration.yaml#/profiles/data-reader'
+    metadata-reader:
+      $ref: './policy.integration.yaml#/profiles/metadata-reader'
+    analytics:
+      $ref: './policy.integration.yaml#/profiles/analytics'
+    views-reader:
+      $ref: './policy.integration.yaml#/profiles/views-reader'
+    admission-reader:
+      $ref: './policy.integration.yaml#/profiles/admission-reader'
+    index-merge-reader:
+      $ref: './policy.integration.yaml#/profiles/index-merge-reader'
+    diagnostic-reader:
+      $ref: './policy.integration.yaml#/profiles/diagnostic-reader'
+    routing-test:
+      $ref: './policy.d/integration/routing.yaml'
+    routing-rc:
+      $ref: './policy.d/integration/routing.yaml'
+      $override:
+        datasource: integration-rc-mysql
+    analytics-rc:
+      $ref: './policy.integration.yaml#/profiles/analytics'
+      $override:
+        datasource: integration-rc-mysql
+    admission-rc:
+      $ref: './policy.integration.yaml#/profiles/admission-reader'
+      $override:
+        datasource: integration-rc-mysql
+    views-rc:
+      $ref: './policy.integration.yaml#/profiles/views-reader'
+      $override:
+        datasource: integration-rc-mysql

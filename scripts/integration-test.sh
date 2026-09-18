@@ -6,6 +6,8 @@ QUORDON_UID=$(id -u)
 QUORDON_GID=$(id -g)
 export QUORDON_UID QUORDON_GID
 chmod 600 config/policy.integration.yaml
+chmod 600 config/policy.integration.refs.yaml
+chmod 600 config/policy.d/integration/*.yaml
 query_shapes_headers=""
 
 cleanup() {
@@ -64,6 +66,7 @@ printf '%s\n' "$capabilities" | grep --quiet '"list_query_shapes"'
 printf '%s\n' "$capabilities" | grep --quiet '"describe_object_statistics"'
 
 query_shapes_headers=$(mktemp)
+python3 scripts/integration-policy-refs.py
 query_shapes=$(curl --fail --silent --show-error \
   --dump-header "$query_shapes_headers" \
   --user integration-client:password \

@@ -39,3 +39,13 @@ License: MIT and Apache-2.0
  /usr/share/doc/quordon/third-party/licenses/gopkg.in-yaml.v3-MIT-and-Apache-2.0.txt.
  The complete Apache-2.0 license is available at
  /usr/share/common-licenses/Apache-2.0.
+
+Files: third_party/go-yaml/*
+Copyright: 2006-2011 Kirill Simonov
+           2011-2019 Canonical Ltd
+           2026 Quordon contributors
+License: MIT and Apache-2.0
+ The complete upstream notice is installed at
+ /usr/share/doc/quordon/third-party/licenses/gopkg.in-yaml.v3-MIT-and-Apache-2.0.txt.
+ Quordon parser modifications are described in
+ /usr/share/doc/quordon/third-party/go-yaml.md.

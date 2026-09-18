@@ -99,7 +99,7 @@ prefix; a border proxy may add and remove one when required.
 
 ```bash
 make verify
-make build VERSION=0.1.0
+make build VERSION=0.1.3
 ./bin/quordon --version
 ```
 
@@ -117,6 +117,22 @@ service:
 ```bash
 install -m 600 config/policy.example.yaml config/policy.yaml
 ```
+
+From 0.1.3, policies can reuse local YAML nodes with `$ref` and replace direct
+mapping fields with `$override`. One profile still routes to one datasource;
+clients select assigned profiles. See [the reference example](config/policy.references.yaml)
+and [assembly rules and limits](docs/policy-configuration.md).
+All referenced files must also have mode `0600` and stay inside the main policy
+directory. Validate assembly and general semantics without database, HTTP or
+credential resolution:
+
+```bash
+./bin/quordon --check-config --config config/policy.yaml
+```
+
+This check does not confirm database readiness, grants or physical shape
+compatibility. Exit status is 0 for success, 1 for configuration errors and 2
+for argument errors; `--check-config` cannot be combined with `--version`.
 
 Set a bcrypt hash for the Basic Auth password and configure each DSN either
 inline or through secret references. Grant the MySQL user the authorized

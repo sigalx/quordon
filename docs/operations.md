@@ -362,6 +362,19 @@ MVP может выполнять эту процедуру через restart. 
 
 ## Последовательность внедрения
 
+При сборке policy из refs публикуйте неизменяемые versioned bundles внутри
+`/etc/quordon/policy.d/`. Основной и подключаемые YAML должны принадлежать service
+account и иметь режим `0600`. Проверьте candidate через `--check-config`, затем
+отдельный loopback process: readiness, authenticated discovery, успешные запросы
+и сохранённые authorization/plan denials каждого контура. General validation
+не заменяет эти проверки; несовместимость не исправляется ослаблением policy.
+
+Новый бинарник сначала проверяется со старым inline-policy. После успешного
+candidate acceptance основной файл атомарно заменяется с повышенной policy
+version, затем перезапускается enabled service. Активные фрагменты на месте не
+переписываются. Сохраняйте старый основной файл, бинарник и bundle для rollback.
+Перед возвратом к 0.1.2 восстановите конфигурацию без `$ref`/`$override`.
+
 1. Local MySQL 8 с production-подобной minor version и scoped `SELECT` grants.
 2. MVP explain в local mode.
 3. Staging server mode.

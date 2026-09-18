@@ -109,6 +109,11 @@ git tag -a v0.1.0 -m "Quordon v0.1.0"
 git push origin v0.1.0
 ```
 
+Для 0.1.3 используйте обычный PR в `master`, дождитесь `verify` для текущего SHA
+и после merge проверьте CI нового `master` SHA до тега `v0.1.3`. Не включайте
+реальные policies, bundles или credentials в release source. При rollback на
+0.1.2 сначала восстановите inline-policy без refs/overrides.
+
 APT repository пока намеренно не публикуется: до него нужно определить модель
 подписания repository metadata, хранение ключей, rotation и hosting. На первом
 этапе `.deb` устанавливается напрямую из GitHub Release.

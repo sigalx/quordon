@@ -10,7 +10,7 @@ provides local software agents with a strictly validated, policy-authorized,
 read-only HTTP API for infrastructure services.
 The current release supports MySQL 8.
 .PP
-The process refuses to start unless its policy is a regular file with mode
+The process refuses to start unless its policy and every referenced YAML file are regular files with mode
 0600. Database credentials, query values, SQL, and raw driver errors are not
 written to the audit stream.
 .SH OPTIONS
@@ -32,10 +32,24 @@ provides the same override when the command-line option is absent.
 .TP
 .BR \-v , " " \-\-version
 Print the version and exit.
+.TP
+.B \-\-check-config
+Assemble local policy references and overrides and validate the effective
+configuration without adapters, database connections, credential resolution,
+or an HTTP listener. This does not check database readiness, grants or physical
+shape compatibility. Cannot be combined with
+.BR \-\-version .
+.SH EXIT STATUS
+0 indicates successful configuration validation or normal termination;
+1 indicates a configuration or runtime failure; 2 indicates invalid arguments.
 .SH FILES
 .TP
 .I /etc/quordon/policy.yaml
 Default policy path used by the packaged systemd service.
+.TP
+.I /etc/quordon/policy.d/
+Optional versioned local policy fragments. Relative references must remain
+within the main policy directory, including through symlinks.
 .TP
 .I /usr/share/doc/quordon/examples/policy.yaml
 Non-operational example policy. Copy and edit it before enabling the service.

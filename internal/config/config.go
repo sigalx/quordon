@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"regexp"
 	"slices"
@@ -189,23 +188,7 @@ type AggregateShapeOrder struct {
 	Direction      string                   `yaml:"direction"`
 }
 
-func Load(data []byte) (Config, error) {
-	if err := validatePolicyYAMLValues(data); err != nil {
-		return Config{}, fmt.Errorf("decode policy: %w", err)
-	}
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	decoder.KnownFields(true)
-	var cfg Config
-	if err := decoder.Decode(&cfg); err != nil {
-		return Config{}, fmt.Errorf("decode policy: %w", err)
-	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return Config{}, errors.New("decode policy: multiple YAML documents are not allowed")
-		}
-		return Config{}, fmt.Errorf("decode policy: %w", err)
-	}
+func finishLoad(cfg Config) (Config, error) {
 	if cfg.Authentication.Basic.Realm == "" {
 		cfg.Authentication.Basic.Realm = "quordon"
 	}
@@ -221,15 +204,6 @@ func Load(data []byte) (Config, error) {
 	}
 	cfg.PolicyHash = fingerprint
 	return cfg, nil
-}
-
-func validatePolicyYAMLValues(data []byte) error {
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	var document yaml.Node
-	if err := decoder.Decode(&document); err != nil {
-		return err
-	}
-	return validatePolicyYAMLNode(&document, "policy", make(map[*yaml.Node]struct{}))
 }
 
 func validatePolicyYAMLNode(node *yaml.Node, path string, active map[*yaml.Node]struct{}) error {

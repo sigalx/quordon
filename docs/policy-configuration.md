@@ -16,13 +16,116 @@
 
 Пример находится в [config/policy.example.yaml](../config/policy.example.yaml).
 
-Рабочий policy обязан быть обычным файлом с точными правами `0600`. Проверка
+Рабочий policy и каждый подключаемый YAML-файл обязаны быть обычными файлами
+с точными правами `0600`. Проверка открытого descriptor
 выполняется до разбора YAML и запуска зависимостей; любой другой режим приводит
 к отказу в запуске:
 
 ```bash
 install -m 600 config/policy.example.yaml config/policy.yaml
 ```
+
+## Локальные `$ref` и `$override`
+
+В 0.1.3 ссылки заменяют узел целиком: profile, allow/deny-list, список shapes,
+отдельный shape, limits или scalar. Runtime получает обычный `Config`. Клиент
+выбирает назначенный profile; один profile связан ровно с одним datasource.
+HTTP API, authorization tokens и discovery используют итоговую policy.
+
+```yaml
+profiles:
+  reader:
+    $ref: './policy.d/bundle-001/reader.yaml'
+  rc-reader:
+    $ref: './policy.d/bundle-001/reader.yaml'
+    $override:
+      datasource: rc-backend
+```
+
+`reader.yaml` содержит полный профиль, включая datasource. Новый профиль
+нужно явно назначить в `principals.<name>.profiles`. Полный пример:
+[config/policy.references.yaml](../config/policy.references.yaml).
+
+Узел ссылки содержит только непустую string `$ref` и optional mapping
+`$override`. Другие соседние fields, override без ref, неверные types и null
+запрещены. Поддерживаются внутренний pointer `#/profiles/reader`, файл целиком
+`./reader.yaml` и фрагмент `./common.yaml#/deny_fields`. Фрагмент — URI-форма
+[JSON Pointer, RFC 6901](https://www.rfc-editor.org/rfc/rfc6901.html): точные
+имена, `~0` для `~`, `~1` для `/`, UTF-8 percent-encoding и zero-based array
+indices без ведущих нулей. `-` не выбирает существующий элемент.
+
+Путь считается от документа ссылки. Вложенные ссылки сохраняют свой исходный
+файл; значения override используют документ override. Сначала полностью
+разрешается база, затем override. Override разрешён только над mapping и
+целиком заменяет или добавляет непосредственные поля. Deep merge, объединения
+массивов и удаления через null нет. Для изменения только одного limit:
+
+```yaml
+limits:
+  $ref: './common.yaml#/limits'
+  $override:
+    max_rows: 500
+```
+
+Missing target, неправильный pointer, цикл и ошибки разрешения базы блокируют
+загрузку, даже если ошибочная ветка заменяется. `$override` — расширение Quordon;
+совместимость с OpenAPI Reference Object не заявляется. Библиотечные документы
+имеют произвольную структуру; итоговая конфигурация сохраняет закрытую схему.
+Template sections, параметры и генерация shapes не вводятся.
+
+Разрешены относительные локальные пути внутри каталога основного policy.
+URI schemes, authority, абсолютные пути, query strings и выход за корень
+запрещены до открытия цели. Переход из подкаталога к соседнему файлу внутри
+корня допустим. Symlinks внутри корня разрешены; [`os.Root`](https://go.dev/blog/osroot)
+защищает открытие от traversal, включая symlink escape и races. Regular file и
+точный режим `0600` проверяются на открытом descriptor.
+
+Каждый файл содержит один YAML-документ. Duplicate keys, нестроковые keys,
+merge keys, recursive aliases, unknown tags и invalid UTF-8 запрещены. Обычные
+anchors/aliases сохраняются и учитываются после раскрытия. Scalar types
+сохраняются без coercion; explicit null запрещён. Native YAML integer/boolean
+spellings сохраняются; прежние canonical-decimal и literal-boolean rules shapes
+и `allow_source_text` продолжают действовать.
+Required fields, shape validations, resources и effective limits проверяются
+после сборки, до typed decode и runtime initialization.
+
+| Бюджет | Фиксированный предел |
+| --- | --- |
+| Один файл / inline input | 8 MiB |
+| Все прочитанные файлы | 16 MiB |
+| Документы | 64 |
+| Глубина структуры и раскрытия | 64 |
+| `$ref`, UTF-8 bytes | 4096 |
+| Исходные / раскрытые узлы | 250 000 / 250 000 |
+| Собранное JSON-представление | 16 MiB |
+
+Пределы применяются и к inline-синтаксису. Document wrapper не считается узлом.
+Source limits проверяются parser до выделения очередного AST node. Expanded
+budget включает aliases, refs и промежуточную базу override. Encoded size
+проверяется до материализации. Каждый нормализованный document URI читается
+один раз за загрузку; кэш неизменяемый, typed profiles и snapshots не разделяют
+mutable maps/slices. При одинаковой версии и effective policy canonical
+redacted fingerprint одинаков для inline/ref: пути и разбиение его не меняют.
+
+`config.LoadFile(path)` выполняет файловую сборку. `config.Load([]byte)`
+поддерживает inline и внутренние ссылки; внешние refs отклоняются без filesystem
+access. Diagnostic содержит `POLICY_*` code, ordinal документа, line/column и
+цепочку числовых позиций refs. Основной документ — 1, остальные нумеруются при
+первом чтении. Filename, pointer, YAML snippet, keys/values и raw decoder/OS
+errors не выводятся.
+
+## Проверка без внешних зависимостей
+
+```bash
+quordon --check-config --config /etc/quordon/policy.yaml
+```
+
+Команда собирает policy, проверяет строгие types/presence и общую semantic
+validation. Adapters, БД, credential resolvers и HTTP listener не запускаются.
+Режим не подтверждает adapter registration, DSN options, DB readiness, grants
+или физическую совместимость shapes. Exit codes: `0` — успешно, `1` — ошибка
+конфигурации, `2` — ошибка аргументов. Сочетание с `--version` запрещено.
+`--listen` проверяется как обычный address override.
 
 ## HTTP server
 
@@ -548,7 +651,8 @@ seconds, чтобы исключить переполнение duration и не
 
 При запуске gateway:
 
-1. Проверяет строгую схему конфигурации.
+1. Ограниченно читает открытые regular `0600` descriptors, проверяет AST и
+   собирает refs/overrides, затем проверяет строгую схему конфигурации.
 2. Отклоняет неизвестные поля.
 3. Проверяет уникальность usernames, principals, datasources и profiles.
 4. Проверяет все ссылки между разделами.

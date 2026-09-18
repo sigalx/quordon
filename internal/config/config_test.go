@@ -70,7 +70,7 @@ func TestKeysetPolicyRequiresStrictBoundedUnambiguousShapes(t *testing.T) {
 		duplicate.MaximumRowsExaminedPerScan--
 		profile.Query.KeysetSelectShapes = append(profile.Query.KeysetSelectShapes, duplicate)
 		cfg.Profiles["analytics"] = profile
-		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "overlaps keyset shape") {
+		if err := cfg.Validate(); err == nil || !policyLoadErrorMatches(err, "overlaps keyset shape") {
 			t.Fatalf("overlapping keyset shape error=%v", err)
 		}
 	})
@@ -84,7 +84,7 @@ func TestKeysetPolicyRequiresStrictBoundedUnambiguousShapes(t *testing.T) {
 		)
 		profile.Limits.MaxParameters = 3
 		cfg.Profiles["analytics"] = profile
-		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "after-page bindings") {
+		if err := cfg.Validate(); err == nil || !policyLoadErrorMatches(err, "after-page bindings") {
 			t.Fatalf("unallocatable cursor bindings error=%v", err)
 		}
 	})
@@ -108,7 +108,7 @@ func TestKeysetPolicyRequiresStrictBoundedUnambiguousShapes(t *testing.T) {
 		}
 		profile.Query.AllowedFilterOperators = append(profile.Query.AllowedFilterOperators, "like")
 		cfg.Profiles["analytics"] = profile
-		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "for like must contain") {
+		if err := cfg.Validate(); err == nil || !policyLoadErrorMatches(err, "for like must contain") {
 			t.Fatalf("numeric LIKE keyset shape error=%v", err)
 		}
 	})
@@ -122,7 +122,7 @@ func TestKeysetPolicyRequiresStrictBoundedUnambiguousShapes(t *testing.T) {
 		}
 		profile.Query.AllowedFilterOperators = append(profile.Query.AllowedFilterOperators, "in")
 		cfg.Profiles["analytics"] = profile
-		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "for in must be homogeneous") {
+		if err := cfg.Validate(); err == nil || !policyLoadErrorMatches(err, "for in must be homogeneous") {
 			t.Fatalf("heterogeneous IN keyset shape error=%v", err)
 		}
 	})
@@ -168,7 +168,7 @@ func TestLoadStrictlyValidatesKeysetShapeYAML(t *testing.T) {
 			if policy == string(template) {
 				t.Fatalf("fixture insertion point %q was not found", fixture.old)
 			}
-			if _, err := Load([]byte(policy)); err == nil || !strings.Contains(err.Error(), fixture.want) {
+			if _, err := Load([]byte(policy)); err == nil || !policyLoadErrorMatches(err, fixture.want) {
 				t.Fatalf("Load() error=%v, want %q", err, fixture.want)
 			}
 		})
@@ -222,7 +222,7 @@ func TestAggregatePolicyRequiresValidUnambiguousShapes(t *testing.T) {
 			}
 			profile.Query.AggregateShapes = append(profile.Query.AggregateShapes, duplicate)
 			cfg.Profiles["analytics"] = profile
-			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "overlaps aggregate shape") {
+			if err := cfg.Validate(); err == nil || !policyLoadErrorMatches(err, "overlaps aggregate shape") {
 				t.Fatalf("overlapping aggregate shapes error = %v", err)
 			}
 		})
@@ -260,7 +260,7 @@ func TestAggregatePolicyRequiresValidUnambiguousShapes(t *testing.T) {
 		profile.Query.AggregateShapes[0].AllowTemporaryTable = nil
 		profile.Query.AggregateShapes[0].AllowFilesort = nil
 		cfg.Profiles["analytics"] = profile
-		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "requires allow_temporary_table and allow_filesort") {
+		if err := cfg.Validate(); err == nil || !policyLoadErrorMatches(err, "requires allow_temporary_table and allow_filesort") {
 			t.Fatalf("missing programmatic time-bucket controls error = %v", err)
 		}
 	})
@@ -373,14 +373,14 @@ func TestListQueryShapesConfigurationRequiresShapeOperationAndBoundsShapeCount(t
 	profile.Query.AggregateShapes = nil
 	profile.Query.KeysetSelectShapes = nil
 	cfg.Profiles["analytics"] = profile
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "requires aggregate or select_keyset") {
+	if err := cfg.Validate(); err == nil || !policyLoadErrorMatches(err, "requires aggregate or select_keyset") {
 		t.Fatalf("list_query_shapes without query operation error = %v", err)
 	}
 
 	profile.Operations = []domain.Operation{domain.OperationAggregate, domain.OperationListQueryShapes}
 	profile.Query.AggregateShapes = make([]AggregateShape, maxSupportedQueryShapes+1)
 	cfg.Profiles["analytics"] = profile
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "must not exceed 1000") {
+	if err := cfg.Validate(); err == nil || !policyLoadErrorMatches(err, "must not exceed 1000") {
 		t.Fatalf("excessive query-shape count error = %v", err)
 	}
 
@@ -388,7 +388,7 @@ func TestListQueryShapesConfigurationRequiresShapeOperationAndBoundsShapeCount(t
 	profile.Query.AggregateShapes = nil
 	profile.Query.KeysetSelectShapes = make([]KeysetSelectShape, maxSupportedQueryShapes+1)
 	cfg.Profiles["analytics"] = profile
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "must not exceed 1000") {
+	if err := cfg.Validate(); err == nil || !policyLoadErrorMatches(err, "must not exceed 1000") {
 		t.Fatalf("excessive undiscovered keyset-shape count error = %v", err)
 	}
 }
@@ -416,7 +416,7 @@ func TestPublicDescriptionIsStrictAndBounded(t *testing.T) {
 				1,
 			)
 			_, err := Load([]byte(policy))
-			if err == nil || !strings.Contains(err.Error(), fixture.want) {
+			if err == nil || !policyLoadErrorMatches(err, fixture.want) {
 				t.Fatalf("Load() error = %v, want %q", err, fixture.want)
 			}
 		})
@@ -431,7 +431,7 @@ func TestPublicDescriptionIsStrictAndBounded(t *testing.T) {
 			1,
 		)
 		_, err := Load([]byte(policy))
-		if err == nil || !strings.Contains(err.Error(), "public_description must be a YAML string") {
+		if err == nil || !policyLoadErrorMatches(err, "public_description must be a YAML string") {
 			t.Fatalf("non-string alias error = %v", err)
 		}
 	})
@@ -487,7 +487,7 @@ func TestLoadRejectsExplicitNullAggregateShapeMembers(t *testing.T) {
 				t.Fatalf("fixture insertion point %q was not found", test.old)
 			}
 			_, err := Load([]byte(policy))
-			if err == nil || !strings.Contains(err.Error(), test.wantPath+" must not be null") {
+			if err == nil || !policyLoadErrorMatches(err, test.wantPath+" must not be null") {
 				t.Fatalf("Load() error = %v, want explicit-null error at %s", err, test.wantPath)
 			}
 		})
@@ -504,7 +504,7 @@ func TestLoadRejectsExplicitNullAggregateShapeMembers(t *testing.T) {
 		)
 		_, err := Load([]byte(policy))
 		want := "maximum_limit must be omitted in scalar mode"
-		if err == nil || !strings.Contains(err.Error(), want) {
+		if err == nil || !policyLoadErrorMatches(err, want) {
 			t.Fatalf("Load() error = %v, want %q", err, want)
 		}
 	})
@@ -554,7 +554,7 @@ func TestLoadRejectsYAMLMergeKeys(t *testing.T) {
 				t.Fatalf("fixture insertion point %q was not found", test.old)
 			}
 			_, err := Load([]byte(policy))
-			if err == nil || !strings.Contains(err.Error(), test.wantPath+" must not use YAML merge keys") {
+			if err == nil || !policyLoadErrorMatches(err, test.wantPath+" must not use YAML merge keys") {
 				t.Fatalf("Load() error = %v, want YAML-merge error at %s", err, test.wantPath)
 			}
 		})
@@ -600,7 +600,7 @@ func TestLoadRejectsCoercedAggregateBounds(t *testing.T) {
 				t.Fatalf("fixture insertion point %q was not found", test.old)
 			}
 			_, err := Load([]byte(policy))
-			if err == nil || !strings.Contains(err.Error(), test.want) {
+			if err == nil || !policyLoadErrorMatches(err, test.want) {
 				t.Fatalf("Load() error = %v, want %q", err, test.want)
 			}
 		})
@@ -679,7 +679,7 @@ func TestLoadRejectsExplicitEmptyAggregateBranchMembers(t *testing.T) {
 				t.Fatalf("fixture insertion point %q was not found", test.old)
 			}
 			_, err := Load([]byte(policy))
-			if err == nil || !strings.Contains(err.Error(), test.wantPath+" must not be empty when present") {
+			if err == nil || !policyLoadErrorMatches(err, test.wantPath+" must not be empty when present") {
 				t.Fatalf("Load() error = %v, want explicit-empty error at %s", err, test.wantPath)
 			}
 		})
@@ -695,7 +695,7 @@ func TestLoadRejectsExplicitEmptyAggregateBranchMembers(t *testing.T) {
 		)
 		_, err := Load([]byte(policy))
 		wantPath := "policy.profiles.analytics.query.aggregate_shapes[0].projection[1].field"
-		if err == nil || !strings.Contains(err.Error(), wantPath+" must not be empty when present") {
+		if err == nil || !policyLoadErrorMatches(err, wantPath+" must not be empty when present") {
 			t.Fatalf("Load() error = %v, want aliased explicit-empty error at %s", err, wantPath)
 		}
 	})
@@ -755,7 +755,7 @@ func TestLoadRejectsNonStringAggregateShapeMembers(t *testing.T) {
 				t.Fatalf("fixture insertion point %q was not found", test.old)
 			}
 			_, err := Load([]byte(policy))
-			if err == nil || !strings.Contains(err.Error(), test.wantPath+" must be a YAML string") {
+			if err == nil || !policyLoadErrorMatches(err, test.wantPath+" must be a YAML string") {
 				t.Fatalf("Load() error = %v, want YAML-string error at %s", err, test.wantPath)
 			}
 		})
@@ -932,7 +932,7 @@ func TestDatasourceRequiresExplicitTLSMode(t *testing.T) {
 		t.Fatalf("read example: %v", err)
 	}
 	data = []byte(strings.Replace(string(data), "    tls_required: true\n", "", 1))
-	if _, err := Load(data); err == nil || !strings.Contains(err.Error(), "tls_required must be set explicitly") {
+	if _, err := Load(data); err == nil || !policyLoadErrorMatches(err, "tls_required must be set explicitly") {
 		t.Fatalf("Load() error = %v, want explicit tls_required error", err)
 	}
 }

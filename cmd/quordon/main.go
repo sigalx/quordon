@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -43,51 +44,73 @@ func main() {
 }
 
 func run() int {
-	if err := validateFlagStyle(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+	return runWithArguments(os.Args[1:], os.Stdout, os.Stderr, startGateway)
+}
+
+type commandOptions struct {
+	configPath, listenOverride string
+	showVersion, checkConfig   bool
+}
+
+func runWithArguments(arguments []string, stdout, stderr io.Writer, start func(config.Config, string, *slog.Logger) int) int {
+	if err := validateFlagStyle(arguments); err != nil {
+		fmt.Fprintln(stderr, "invalid option style: long options must start with --")
 		return 2
 	}
-	var configPath string
-	var listenOverride string
-	var showVersion bool
-	flag.StringVar(&configPath, "config", envOr("QUORDON_CONFIG", "config/policy.yaml"), "policy configuration path")
-	flag.StringVar(&configPath, "c", envOr("QUORDON_CONFIG", "config/policy.yaml"), "policy configuration path")
-	flag.StringVar(&listenOverride, "listen", os.Getenv("QUORDON_LISTEN"), "override the HTTP listen address from policy")
-	flag.StringVar(&listenOverride, "l", os.Getenv("QUORDON_LISTEN"), "override the HTTP listen address from policy")
-	flag.BoolVar(&showVersion, "version", false, "print version and exit")
-	flag.BoolVar(&showVersion, "v", false, "print version and exit")
-	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [options]\n", os.Args[0])
-		fmt.Fprintln(flag.CommandLine.Output(), "  -c, --config PATH     policy configuration path")
-		fmt.Fprintln(flag.CommandLine.Output(), "  -l, --listen ADDRESS  override server.listen")
-		fmt.Fprintln(flag.CommandLine.Output(), "  -v, --version         print version and exit")
+	var options commandOptions
+	flags := flag.NewFlagSet("quordon", flag.ContinueOnError)
+	// flag's raw errors can repeat arbitrary argument values. Print safe errors
+	// ourselves; help still goes to the caller's stderr.
+	flags.SetOutput(io.Discard)
+	flags.StringVar(&options.configPath, "config", envOr("QUORDON_CONFIG", "config/policy.yaml"), "policy configuration path")
+	flags.StringVar(&options.configPath, "c", envOr("QUORDON_CONFIG", "config/policy.yaml"), "policy configuration path")
+	flags.StringVar(&options.listenOverride, "listen", os.Getenv("QUORDON_LISTEN"), "override the HTTP listen address from policy")
+	flags.StringVar(&options.listenOverride, "l", os.Getenv("QUORDON_LISTEN"), "override the HTTP listen address from policy")
+	flags.BoolVar(&options.showVersion, "version", false, "print version and exit")
+	flags.BoolVar(&options.showVersion, "v", false, "print version and exit")
+	flags.BoolVar(&options.checkConfig, "check-config", false, "assemble and validate policy without external dependencies")
+	flags.Usage = func() {
+		fmt.Fprintln(stderr, "Usage: quordon [options]")
+		fmt.Fprintln(stderr, "  -c, --config PATH     policy configuration path")
+		fmt.Fprintln(stderr, "  -l, --listen ADDRESS  override server.listen")
+		fmt.Fprintln(stderr, "      --check-config    assemble and validate policy; no readiness checks")
+		fmt.Fprintln(stderr, "  -v, --version         print version and exit")
 	}
-	flag.Parse()
-	if err := validateNoPositionalArguments(flag.Args()); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+	if err := flags.Parse(arguments); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		fmt.Fprintln(stderr, "invalid command arguments")
 		return 2
 	}
-	if showVersion {
-		fmt.Println(version)
+	if len(flags.Args()) != 0 || options.showVersion && options.checkConfig {
+		fmt.Fprintln(stderr, "positional arguments and --version with --check-config are not allowed")
+		return 2
+	}
+	if options.showVersion {
+		fmt.Fprintln(stdout, version)
 		return 0
 	}
 
-	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
-	data, err := config.ReadSecureFile(configPath)
-	if err != nil {
-		logger.Error("read policy configuration", "error", err)
-		return 1
-	}
-	cfg, err := config.Load(data)
+	logger := slog.New(slog.NewJSONHandler(stderr, nil))
+	cfg, err := config.LoadFile(options.configPath)
 	if err != nil {
 		logger.Error("load policy configuration", "error", err)
 		return 1
 	}
-	listen, err := effectiveListenAddress(cfg.Server.Listen, listenOverride)
+	listen, err := effectiveListenAddress(cfg.Server.Listen, options.listenOverride)
 	if err != nil {
 		logger.Error("invalid HTTP listen address", "error", err)
 		return 1
 	}
+	if options.checkConfig {
+		fmt.Fprintln(stdout, "configuration valid (database readiness not checked)")
+		return 0
+	}
+	return start(cfg, listen, logger)
+}
+
+func startGateway(cfg config.Config, listen string, logger *slog.Logger) int {
 	resolver := secrets.EnvironmentAndFile{}
 	authenticator, authProblems := auth.NewBasic(cfg.Authentication.Basic, resolver)
 	databases, databaseProblems := database.NewManager(cfg, resolver, mysql8.New())
