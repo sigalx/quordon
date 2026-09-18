@@ -12,4 +12,4 @@ aliases, references, intermediate overrides, bytes and document counts.
 Implementation changes are confined to `yaml.go` and `decode.go`; upstream tests
 are retained. The test-only check.v1 dependency is pinned to the version already
 used by Quordon's module graph. `limits_test.go` covers boundary acceptance and
-early parser rejection.
+early parser rejection. Source whitespace is normalized for Quordon lint checks.
