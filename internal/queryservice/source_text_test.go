@@ -32,7 +32,7 @@ func TestSourceTextDenialAndMissingFeatureBeforeDatasourceCalls(t *testing.T) {
 			}
 			sink := &audit.MemorySink{}
 			service := New(policy.NewSnapshot(cfg), manager, sink, cfg, "test")
-			request := queryspec.Request{Profile: "metadata", Query: queryspec.Spec{Source: queryspec.ResourceRef{Schema: "app", Name: "orders"}, Projection: []queryspec.Selection{{Kind: "field", Field: "id", Representation: queryspec.RepresentationSourceText}}}}
+			request := queryspec.Request{Profile: "metadata", Datasource: "db", Query: queryspec.Spec{Source: queryspec.ResourceRef{Schema: "app", Name: "orders"}, Projection: []queryspec.Selection{{Kind: "field", Field: "id", Representation: queryspec.RepresentationSourceText}}}}
 			run := func() error {
 				var err error
 				switch operation {
@@ -41,14 +41,14 @@ func TestSourceTextDenialAndMissingFeatureBeforeDatasourceCalls(t *testing.T) {
 				case domain.OperationExplainSelect:
 					_, err = service.Explain(context.Background(), "request", "query", "client", "credential", 1, request)
 				case domain.OperationAggregate:
-					aggregate := queryspec.AggregateRequest{Profile: request.Profile, Query: queryspec.AggregateSpec{
+					aggregate := queryspec.AggregateRequest{Profile: request.Profile, Datasource: request.Datasource, Query: queryspec.AggregateSpec{
 						Mode: "scalar", Source: request.Query.Source,
 						Projection: []queryspec.AggregateOutput{{Kind: "measure", Function: "count_all", Alias: "total"}},
 						Filter:     &queryspec.Filter{Kind: "predicate", Field: "id", Operator: "eq", Representation: queryspec.RepresentationSourceText, Values: []queryspec.TypedValue{{Type: "string", Value: json.RawMessage(`"0000-00-00"`)}}},
 					}}
 					_, err = service.Aggregate(context.Background(), "request", "query", "client", "credential", 1, aggregate)
 				case domain.OperationSelectKeyset:
-					keyset := queryspec.KeysetRequest{Kind: "keyset", Profile: request.Profile, Shape: "events_page", Query: queryspec.KeysetSpec{
+					keyset := queryspec.KeysetRequest{Kind: "keyset", Profile: request.Profile, Datasource: request.Datasource, Shape: "events_page", Query: queryspec.KeysetSpec{
 						Source: request.Query.Source, Projection: request.Query.Projection,
 						OrderBy: []queryspec.Sort{{Field: "id", Direction: "asc", Representation: queryspec.RepresentationSourceText}}, Limit: 2,
 					}, Page: queryspec.KeysetPage{Kind: "first"}}
@@ -121,7 +121,7 @@ func TestSourceTextAggregateRepresentationMismatchBeforeDatasourceCalls(t *testi
 			t.Fatal(problems)
 		}
 		limit := 2
-		request := queryspec.AggregateRequest{Profile: "metadata", Query: queryspec.AggregateSpec{
+		request := queryspec.AggregateRequest{Profile: "metadata", Datasource: "db", Query: queryspec.AggregateSpec{
 			Mode: "grouped", Source: queryspec.ResourceRef{Schema: "app", Name: "orders"}, Limit: &limit,
 			Projection: []queryspec.AggregateOutput{{Kind: "dimension", Field: "event_date", Representation: queryspec.RepresentationSourceText}, {Kind: "measure", Function: "count_all", Alias: "total"}},
 			OrderBy:    []queryspec.AggregateSort{{Kind: "dimension", Field: field, Direction: "asc"}},

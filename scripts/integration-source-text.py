@@ -82,7 +82,7 @@ def main():
                                         ("event_date", "wall_time", "occurred_at", "optional_date")]
     query = {"source": source, "projection": projection,
              "order_by": [{"field": "id", "direction": "asc"}], "limit": 20}
-    body = {"profile": "diagnostic-reader", "query": query}
+    body = {"profile": "diagnostic-reader", "datasource": "integration-mysql", "query": query}
     rows = request("/queries/select", body)
     assert rows["row_count"] == 8
     assert all(column["type"] == column["encoding"] == "string" for column in rows["columns"][1:])
@@ -99,7 +99,7 @@ def main():
     assert request("/health/ready")["status"] == "ok"
     assert request("/queries/select", body)["rows"] == rows["rows"]
 
-    discovery = request("/query-shapes?profile=diagnostic-reader")
+    discovery = request("/query-shapes?profile=diagnostic-reader&datasource=integration-mysql")
     shapes = {shape["name"]: shape for shape in discovery["shapes"]}
     assert "required_index" not in json.dumps(discovery)
     assert "source_text" in json.dumps(discovery)
@@ -125,7 +125,7 @@ def main():
             page = {"kind": "first"}
             observed, cursors = [], set()
             for _ in range(12):
-                result = request("/queries/select", {"kind": "keyset", "profile": "diagnostic-reader",
+                result = request("/queries/select", {"kind": "keyset", "profile": "diagnostic-reader", "datasource": "integration-mysql",
                                  "shape": name, "query": spec, "page": page})
                 assert result["columns"][0]["type"] == "string"
                 observed.extend(result["rows"])
@@ -144,12 +144,12 @@ def main():
 
     # Invalid values retain diagnostic text, while ordinary calendar keyset remains strict.
     for identity in (1, 5, 6):
-        failure = request("/queries/select", {"kind": "keyset", "profile": "diagnostic-reader",
+        failure = request("/queries/select", {"kind": "keyset", "profile": "diagnostic-reader", "datasource": "integration-mysql",
                           "shape": "diagnostic_calendar_by_id", "query": shape_query("diagnostic_calendar_by_id", [identity]),
                           "page": {"kind": "first"}}, status=502)
         assert failure["code"] == "UPSTREAM_ERROR"
     for identity in (2, 3, 4, 8):
-        result = request("/queries/select", {"kind": "keyset", "profile": "diagnostic-reader",
+        result = request("/queries/select", {"kind": "keyset", "profile": "diagnostic-reader", "datasource": "integration-mysql",
                          "shape": "diagnostic_calendar_by_id", "query": shape_query("diagnostic_calendar_by_id", [identity]),
                          "page": {"kind": "first"}})
         assert result["row_count"] == 1
@@ -159,7 +159,7 @@ def main():
         spec = shape_query(name, [value])
         page = {"kind": "first"}
         for expected_id in (2, 3, 4):
-            result = request("/queries/select", {"kind": "keyset", "profile": "diagnostic-reader",
+            result = request("/queries/select", {"kind": "keyset", "profile": "diagnostic-reader", "datasource": "integration-mysql",
                              "shape": name, "query": spec, "page": page})
             assert result["rows"][0][1] == str(expected_id)
             assert result["page"]["next_cursor"][0]["type"] == cursor_type
@@ -170,28 +170,28 @@ def main():
                                     ("like", ["2026-%"], 3), ("is_null", [], 1)):
         name = "diagnostic_date_" + operator
         spec = shape_query(name, values)
-        assert request("/queries/aggregate", {"profile": "diagnostic-reader", "query": spec})["rows"] == [[str(total)]]
+        assert request("/queries/aggregate", {"profile": "diagnostic-reader", "datasource": "integration-mysql", "query": spec})["rows"] == [[str(total)]]
         select = {"source": source, "projection": [field("id", False)], "filter": spec["filter"], "limit": 20}
-        assert request("/queries/select", {"profile": "diagnostic-reader", "query": select})["row_count"] == total
+        assert request("/queries/select", {"profile": "diagnostic-reader", "datasource": "integration-mysql", "query": select})["row_count"] == total
 
-    assert request("/queries/aggregate", {"profile": "diagnostic-reader",
+    assert request("/queries/aggregate", {"profile": "diagnostic-reader", "datasource": "integration-mysql",
                    "query": shape_query("diagnostic_timestamp_eq", ["2026-01-01 00:00:00.000001"])})["rows"] == [["1"]]
-    timestamp_groups = request("/queries/aggregate", {"profile": "diagnostic-reader",
+    timestamp_groups = request("/queries/aggregate", {"profile": "diagnostic-reader", "datasource": "integration-mysql",
                               "query": shape_query("diagnostic_timestamp_counts")})
     assert ["2026-01-01 00:00:00.000001", "1"] in timestamp_groups["rows"]
     assert ["0000-00-00 00:00:00.000000", "1"] in timestamp_groups["rows"]
-    result = request("/queries/aggregate", {"profile": "diagnostic-reader",
+    result = request("/queries/aggregate", {"profile": "diagnostic-reader", "datasource": "integration-mysql",
                      "query": shape_query("diagnostic_date_counts")})
     assert result["columns"][0]["type"] == result["columns"][0]["encoding"] == "string"
     assert ["2026-02-31", "2"] in result["rows"]
     assert len(result["rows"]) == 7
     for name in ("diagnostic_date_counts_work_denied", "diagnostic_date_counts_estimate_denied"):
         before = main_select_count()
-        failure = request("/queries/aggregate", {"profile": "diagnostic-reader", "query": shape_query(name)}, status=422)
+        failure = request("/queries/aggregate", {"profile": "diagnostic-reader", "datasource": "integration-mysql", "query": shape_query(name)}, status=422)
         assert failure["code"] == "UNSUPPORTED_QUERY"
         assert main_select_count() == before
 
-    description = request("/schemas/application/objects/diagnostic_dates?profile=diagnostic-reader")
+    description = request("/schemas/application/objects/diagnostic_dates?profile=diagnostic-reader&datasource=integration-mysql")
     assert all(column["name"] != "hidden_date" for column in description["columns"])
     for placement in ("projection", "filter", "order_by"):
         spec = {"source": source, "projection": [field("id", False)], "limit": 2}
@@ -203,19 +203,19 @@ def main():
         else:
             spec["order_by"] = [{"field": "hidden_date", "direction": "asc", "representation": "source_text"}]
         before = main_select_count()
-        failure = request("/queries/select", {"profile": "diagnostic-reader", "query": spec}, status=403)
+        failure = request("/queries/select", {"profile": "diagnostic-reader", "datasource": "integration-mysql", "query": spec}, status=403)
         assert failure["code"] == "DENIED_FIELD"
         assert main_select_count() == before
 
     before = main_select_count()
-    failure = request("/queries/select", {"profile": "diagnostic-reader",
+    failure = request("/queries/select", {"profile": "diagnostic-reader", "datasource": "integration-mysql",
                       "query": {"source": source, "projection": [field("id")], "limit": 2}}, status=422)
     assert failure["code"] == "UNSUPPORTED_QUERY"
     assert main_select_count() == before
 
     # The diagnostic cleanup must preserve the original query timeout. A
     # connection with an interrupted transaction/session is discarded safely.
-    slow = {"profile": "diagnostic-reader", "query": {
+    slow = {"profile": "diagnostic-reader", "datasource": "integration-mysql", "query": {
         "source": {"schema": "application", "name": "diagnostic_slow_dates"},
         "projection": [field("event_date")], "limit": 1,
     }}

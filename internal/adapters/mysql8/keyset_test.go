@@ -605,7 +605,7 @@ func TestKeysetCellSeparatesPortableAndMySQLTemporalRanges(t *testing.T) {
 
 func TestKeysetContinuationRequestBudgetHasNoArbitraryFloor(t *testing.T) {
 	request := queryspec.NormalizedKeysetRequest{
-		Profile: "reader", Shape: "orders_page",
+		Profile: "reader", Datasource: "mysql", Shape: "orders_page",
 		Query: queryspec.KeysetSpec{
 			Source:     queryspec.ResourceRef{Schema: "app", Name: "orders"},
 			Projection: []queryspec.Selection{{Kind: "field", Field: "id"}},
@@ -618,7 +618,7 @@ func TestKeysetContinuationRequestBudgetHasNoArbitraryFloor(t *testing.T) {
 		keyKinds:   []string{"integer"},
 	}
 	continuation := queryspec.KeysetRequest{
-		Kind: "keyset", Profile: request.Profile, Shape: request.Shape, Query: request.Query,
+		Kind: "keyset", Profile: request.Profile, Datasource: request.Datasource, Shape: request.Shape, Query: request.Query,
 		Page: queryspec.KeysetPage{Kind: "after", Cursor: []queryspec.KeysetCursorValue{{Type: "integer", Value: "18446744073709551615"}}},
 	}
 	payload, err := json.Marshal(continuation)

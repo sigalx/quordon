@@ -36,6 +36,32 @@ type Snapshot struct {
 	profiles   map[string]config.Profile
 }
 
+// BindingKey identifies one configured policy route. It is a derived key used
+// for bounded runtime state, not a separately configurable policy entity.
+type BindingKey struct {
+	Profile    string
+	Datasource string
+}
+
+// AuthorizedBinding is minted only after all three assignment checks pass:
+// principal -> profile, principal -> datasource, and profile -> datasource.
+// Its fields remain private so callers cannot change routing after approval.
+type AuthorizedBinding struct {
+	owner      *Snapshot
+	principal  string
+	key        BindingKey
+	operation  domain.Operation
+	limits     domain.Limits
+	policyHash string
+}
+
+func (a AuthorizedBinding) Principal() string           { return a.principal }
+func (a AuthorizedBinding) Profile() string             { return a.key.Profile }
+func (a AuthorizedBinding) Datasource() string          { return a.key.Datasource }
+func (a AuthorizedBinding) Operation() domain.Operation { return a.operation }
+func (a AuthorizedBinding) Limits() domain.Limits       { return a.limits }
+func (a AuthorizedBinding) Key() BindingKey             { return a.key }
+
 func NewSnapshot(cfg config.Config) *Snapshot {
 	return &Snapshot{
 		version:    cfg.PolicyVersion(),
@@ -58,6 +84,14 @@ func (s *Snapshot) PrincipalProfiles(principal string) []string {
 	return append([]string(nil), configured.Profiles...)
 }
 
+func (s *Snapshot) PrincipalDatasources(principal string) []string {
+	configured, ok := s.principals[principal]
+	if !ok {
+		return nil
+	}
+	return slices.Clone(configured.Datasources)
+}
+
 func (s *Snapshot) Profile(name string) (config.Profile, bool) {
 	profile, ok := s.profiles[name]
 	if !ok {
@@ -69,12 +103,50 @@ func (s *Snapshot) Profile(name string) (config.Profile, bool) {
 // ProfileBinding exposes only the immutable routing and limit fields needed by
 // the service before operation-specific authorization. It deliberately avoids
 // cloning the potentially large aggregate shape policy on every request.
-func (s *Snapshot) ProfileBinding(name string) (string, []domain.Operation, domain.Limits, bool) {
+func (s *Snapshot) ProfileBinding(name string) ([]string, []domain.Operation, domain.Limits, bool) {
 	profile, ok := s.profiles[name]
 	if !ok {
-		return "", nil, domain.Limits{}, false
+		return nil, nil, domain.Limits{}, false
 	}
-	return profile.Datasource, slices.Clone(profile.Operations), profile.Limits, true
+	return slices.Clone(profile.Datasources), slices.Clone(profile.Operations), profile.Limits, true
+}
+
+func (s *Snapshot) AuthorizeBinding(
+	principal, profileName, datasource string, operation domain.Operation,
+) (AuthorizedBinding, error) {
+	principalConfig, ok := s.principals[principal]
+	if !ok || !slices.Contains(principalConfig.Profiles, profileName) ||
+		!slices.Contains(principalConfig.Datasources, datasource) {
+		return AuthorizedBinding{}, &Denial{ReasonCode: ReasonDeniedOperation}
+	}
+	profile, ok := s.profiles[profileName]
+	if !ok || !slices.Contains(profile.Datasources, datasource) ||
+		!slices.Contains(profile.Operations, operation) {
+		return AuthorizedBinding{}, &Denial{ReasonCode: ReasonDeniedOperation}
+	}
+	return AuthorizedBinding{
+		owner: s, principal: principal,
+		key:       BindingKey{Profile: profileName, Datasource: datasource},
+		operation: operation, limits: s.hardLimits.Min(profile.Limits), policyHash: s.hash,
+	}, nil
+}
+
+func (s *Snapshot) profileForBinding(binding AuthorizedBinding, operation domain.Operation) (config.Profile, error) {
+	if binding.owner != s || binding.policyHash != s.hash || binding.principal == "" ||
+		binding.key.Profile == "" || binding.key.Datasource == "" || binding.operation != operation {
+		return config.Profile{}, &Denial{ReasonCode: ReasonDeniedOperation}
+	}
+	principal, ok := s.principals[binding.principal]
+	if !ok || !slices.Contains(principal.Profiles, binding.key.Profile) ||
+		!slices.Contains(principal.Datasources, binding.key.Datasource) {
+		return config.Profile{}, &Denial{ReasonCode: ReasonDeniedOperation}
+	}
+	profile, ok := s.profiles[binding.key.Profile]
+	if !ok || !slices.Contains(profile.Datasources, binding.key.Datasource) ||
+		!slices.Contains(profile.Operations, operation) {
+		return config.Profile{}, &Denial{ReasonCode: ReasonDeniedOperation}
+	}
+	return profile, nil
 }
 
 // AllowsSourceText exposes a scalar feature setting without cloning the
@@ -91,6 +163,7 @@ func clonePrincipals(source map[string]config.Principal) map[string]config.Princ
 	cloned := make(map[string]config.Principal, len(source))
 	for name, principal := range source {
 		principal.Profiles = slices.Clone(principal.Profiles)
+		principal.Datasources = slices.Clone(principal.Datasources)
 		cloned[name] = principal
 	}
 	return cloned
@@ -108,6 +181,7 @@ func cloneProfiles(source map[string]config.Profile) map[string]config.Profile {
 }
 
 func cloneProfile(profile config.Profile) config.Profile {
+	profile.Datasources = slices.Clone(profile.Datasources)
 	profile.Operations = slices.Clone(profile.Operations)
 	profile.Resources.Schemas.Allow = slices.Clone(profile.Resources.Schemas.Allow)
 	profile.Resources.Schemas.Deny = slices.Clone(profile.Resources.Schemas.Deny)
@@ -248,32 +322,28 @@ func (q AuthorizedQuery) Query() queryspec.NormalizedSpec { return q.query.Spec(
 func (q AuthorizedQuery) ReferencedFields() []string      { return referencedFields(q.query.Spec()) }
 
 func (s *Snapshot) AuthorizeExplain(
-	principal, profileName string,
+	binding AuthorizedBinding,
 	query queryspec.Validated,
 	semantics domain.IdentifierSemantics,
 ) (AuthorizedQuery, error) {
-	return s.authorizeQuery(principal, profileName, domain.OperationExplainSelect, query, semantics)
+	return s.authorizeQuery(binding, domain.OperationExplainSelect, query, semantics)
 }
 
 func (s *Snapshot) AuthorizeSelect(
-	principal, profileName string,
+	binding AuthorizedBinding,
 	query queryspec.Validated,
 	semantics domain.IdentifierSemantics,
 ) (AuthorizedQuery, error) {
-	return s.authorizeQuery(principal, profileName, domain.OperationSelect, query, semantics)
+	return s.authorizeQuery(binding, domain.OperationSelect, query, semantics)
 }
 
 func (s *Snapshot) AuthorizeAggregate(
-	principal, profileName string,
+	binding AuthorizedBinding,
 	query queryspec.ValidatedAggregate,
 	semantics domain.IdentifierSemantics,
 ) (AuthorizedAggregate, error) {
-	principalConfig, ok := s.principals[principal]
-	if !ok || !slices.Contains(principalConfig.Profiles, profileName) {
-		return AuthorizedAggregate{}, &Denial{ReasonCode: ReasonDeniedOperation}
-	}
-	profile, ok := s.profiles[profileName]
-	if !ok || !slices.Contains(profile.Operations, domain.OperationAggregate) {
+	profile, err := s.profileForBinding(binding, domain.OperationAggregate)
+	if err != nil {
 		return AuthorizedAggregate{}, &Denial{ReasonCode: ReasonDeniedOperation}
 	}
 	effectiveLimits := s.hardLimits.Min(profile.Limits)
@@ -353,7 +423,7 @@ func (s *Snapshot) AuthorizeAggregate(
 	allowTemporaryTable := shape.AllowTemporaryTable != nil && *shape.AllowTemporaryTable
 	allowFilesort := shape.AllowFilesort != nil && *shape.AllowFilesort
 	return AuthorizedAggregate{
-		principal: principal, profile: profileName, datasource: profile.Datasource,
+		principal: binding.Principal(), profile: binding.Profile(), datasource: binding.Datasource(),
 		operation: domain.OperationAggregate, limits: effectiveLimits, query: normalized, numericBoundaries: boundaries, parameterCount: parameterCount,
 		requiredIndex:              shape.RequiredIndex,
 		maximumRowsExaminedPerScan: shape.MaximumRowsExaminedPerScan,
@@ -364,17 +434,13 @@ func (s *Snapshot) AuthorizeAggregate(
 }
 
 func (s *Snapshot) authorizeQuery(
-	principal, profileName string,
+	binding AuthorizedBinding,
 	operation domain.Operation,
 	query queryspec.Validated,
 	semantics domain.IdentifierSemantics,
 ) (AuthorizedQuery, error) {
-	principalConfig, ok := s.principals[principal]
-	if !ok || !slices.Contains(principalConfig.Profiles, profileName) {
-		return AuthorizedQuery{}, &Denial{ReasonCode: ReasonDeniedOperation}
-	}
-	profile, ok := s.profiles[profileName]
-	if !ok || !slices.Contains(profile.Operations, operation) {
+	profile, err := s.profileForBinding(binding, operation)
+	if err != nil {
 		return AuthorizedQuery{}, &Denial{ReasonCode: ReasonDeniedOperation}
 	}
 	effectiveLimits := s.hardLimits.Min(profile.Limits)
@@ -428,9 +494,9 @@ func (s *Snapshot) authorizeQuery(
 	}
 
 	return AuthorizedQuery{
-		principal:  principal,
-		profile:    profileName,
-		datasource: profile.Datasource,
+		principal:  binding.Principal(),
+		profile:    binding.Profile(),
+		datasource: binding.Datasource(),
 		operation:  operation,
 		limits:     effectiveLimits,
 		query:      revalidated,
@@ -487,22 +553,18 @@ func (a AuthorizedObjectStatistics) IdentifierSemanticsGeneration() string {
 }
 
 func (s *Snapshot) AuthorizeObjectStatistics(
-	principal, credentialIdentifier, profileName, adapterName string,
+	binding AuthorizedBinding, credentialIdentifier, adapterName string,
 	resource queryspec.ResourceRef,
 	semantics domain.IdentifierSemantics,
 ) (AuthorizedObjectStatistics, error) {
-	if principal == "" || credentialIdentifier == "" || profileName == "" || adapterName == "" {
+	if binding.Principal() == "" || credentialIdentifier == "" || binding.Profile() == "" || adapterName == "" {
 		return AuthorizedObjectStatistics{}, &Denial{ReasonCode: ReasonDeniedOperation}
 	}
 	if !queryspec.IsIdentifier(resource.Schema) || !queryspec.IsIdentifier(resource.Name) {
 		return AuthorizedObjectStatistics{}, &Denial{ReasonCode: ReasonDeniedResource}
 	}
-	principalConfig, ok := s.principals[principal]
-	if !ok || !slices.Contains(principalConfig.Profiles, profileName) {
-		return AuthorizedObjectStatistics{}, &Denial{ReasonCode: ReasonDeniedOperation}
-	}
-	profile, ok := s.profiles[profileName]
-	if !ok || !slices.Contains(profile.Operations, domain.OperationDescribeObjectStatistics) {
+	profile, err := s.profileForBinding(binding, domain.OperationDescribeObjectStatistics)
+	if err != nil {
 		return AuthorizedObjectStatistics{}, &Denial{ReasonCode: ReasonDeniedOperation}
 	}
 	if !allowed(
@@ -518,16 +580,16 @@ func (s *Snapshot) AuthorizeObjectStatistics(
 	}
 	generationInput := fmt.Sprintf(
 		"%s\x00%s\x00%s\x00%t%t%t",
-		s.hash, profileName, adapterName,
+		s.hash, binding.Profile()+"\x00"+binding.Datasource(), adapterName,
 		semantics.CaseInsensitiveSchemas,
 		semantics.CaseInsensitiveObjects,
 		semantics.CaseInsensitiveFields,
 	)
 	generationDigest := sha256.Sum256([]byte(generationInput))
 	return AuthorizedObjectStatistics{
-		principal: principal, credentialIdentifier: credentialIdentifier,
-		profile: profileName, policyVersion: s.version, policyHash: s.hash,
-		datasource: profile.Datasource, adapter: adapterName,
+		principal: binding.Principal(), credentialIdentifier: credentialIdentifier,
+		profile: binding.Profile(), policyVersion: s.version, policyHash: s.hash,
+		datasource: binding.Datasource(), adapter: adapterName,
 		operation: domain.OperationDescribeObjectStatistics,
 		schema:    canonicalPolicyIdentifier(resource.Schema, semantics.CaseInsensitiveSchemas),
 		object:    canonicalPolicyIdentifier(resource.Name, semantics.CaseInsensitiveObjects),
@@ -571,27 +633,27 @@ func (a AuthorizedSchema) AllowsField(field string) bool {
 }
 
 func (s *Snapshot) AuthorizeListObjects(
-	principal, profileName, schema string,
+	binding AuthorizedBinding, schema string,
 	semantics domain.IdentifierSemantics,
 ) (AuthorizedSchema, error) {
 	return s.authorizeSchema(
-		principal, profileName, domain.OperationListObjects,
+		binding, domain.OperationListObjects,
 		queryspec.ResourceRef{Schema: schema}, semantics,
 	)
 }
 
 func (s *Snapshot) AuthorizeDescribeObject(
-	principal, profileName string,
+	binding AuthorizedBinding,
 	object queryspec.ResourceRef,
 	semantics domain.IdentifierSemantics,
 ) (AuthorizedSchema, error) {
 	return s.authorizeSchema(
-		principal, profileName, domain.OperationDescribeObject, object, semantics,
+		binding, domain.OperationDescribeObject, object, semantics,
 	)
 }
 
 func (s *Snapshot) authorizeSchema(
-	principal, profileName string,
+	binding AuthorizedBinding,
 	operation domain.Operation,
 	resource queryspec.ResourceRef,
 	semantics domain.IdentifierSemantics,
@@ -608,12 +670,8 @@ func (s *Snapshot) authorizeSchema(
 	default:
 		return AuthorizedSchema{}, &Denial{ReasonCode: ReasonDeniedOperation}
 	}
-	principalConfig, ok := s.principals[principal]
-	if !ok || !slices.Contains(principalConfig.Profiles, profileName) {
-		return AuthorizedSchema{}, &Denial{ReasonCode: ReasonDeniedOperation}
-	}
-	profile, ok := s.profiles[profileName]
-	if !ok || !slices.Contains(profile.Operations, operation) {
+	profile, err := s.profileForBinding(binding, operation)
+	if err != nil {
 		return AuthorizedSchema{}, &Denial{ReasonCode: ReasonDeniedOperation}
 	}
 	if !allowed(
@@ -631,7 +689,7 @@ func (s *Snapshot) authorizeSchema(
 		return AuthorizedSchema{}, &Denial{ReasonCode: ReasonDeniedResource}
 	}
 	return AuthorizedSchema{
-		principal: principal, profile: profileName, datasource: profile.Datasource,
+		principal: binding.Principal(), profile: binding.Profile(), datasource: binding.Datasource(),
 		operation: operation, schema: resource.Schema, object: resource.Name,
 		limits:    s.hardLimits.Min(profile.Limits),
 		resources: cloneResourcePolicy(profile.Resources), semantics: semantics,

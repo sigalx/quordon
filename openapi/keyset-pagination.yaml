@@ -2,7 +2,7 @@
 openapi: 3.1.0
 info:
   title: Quordon Keyset Pagination API
-  version: 1.5.0
+  version: 1.6.0
   description: >-
     Executable contract for policy-curated keyset pagination of bounded SELECT
     results and the single complete JSON query-shape discovery contract.
@@ -721,10 +721,12 @@ paths:
           denied-operation-or-shape:
             authorized-resources-and-fields: omitted
             cursor-filter-and-row-values: omitted
-          unassigned-profile-denial:
+          unassigned-binding-denial:
             policy-profile: omitted
             requested-profile: domain-separated-sha256-and-utf8-byte-length-only
             raw-requested-profile-in-audit: forbidden
+            requested-datasource: domain-separated-sha256-and-utf8-byte-length-only
+            raw-requested-datasource-in-audit: forbidden
           identifier-semantics-failure:
             classified-completion-required: true
             authorized-resources-and-fields: omitted-until-token-exists
@@ -782,6 +784,7 @@ paths:
               legacy:
                 value:
                   profile: reader
+                  datasource: primary-mysql
                   query:
                     source: {schema: application, name: employees}
                     projection:
@@ -791,6 +794,7 @@ paths:
                 value:
                   kind: keyset
                   profile: reader
+                  datasource: primary-mysql
                   shape: employees_by_id
                   query:
                     source: {schema: application, name: employees}
@@ -811,6 +815,7 @@ paths:
                 value:
                   kind: keyset
                   profile: reader
+                  datasource: primary-mysql
                   shape: employees_by_id
                   query:
                     source: {schema: application, name: employees}
@@ -1067,12 +1072,15 @@ components:
       description: Explicit keyset branch of POST /queries/select.
       type: object
       additionalProperties: false
-      required: [kind, profile, shape, query, page]
+      required: [kind, profile, datasource, shape, query, page]
       properties:
         kind:
           type: string
           const: keyset
         profile:
+          type: string
+          minLength: 1
+        datasource:
           type: string
           minLength: 1
         shape:

@@ -32,15 +32,15 @@ adapter:
 - `GET /health/live`;
 - `GET /health/ready`;
 - `GET /capabilities`;
-- `GET /query-shapes?profile=...` — authorized public templates for composing
+- `GET /query-shapes?profile=...&datasource=...` — authorized public templates for composing
   aggregate and keyset queries through one `application/json` contract, including
   UTC time buckets and explicit diagnostic temporal text; execution controls
   remain private;
-- `GET /schemas/{schema}/objects?profile=...` — a policy-filtered list of
+- `GET /schemas/{schema}/objects?profile=...&datasource=...` — a policy-filtered list of
   tables and trusted views;
-- `GET /schemas/{schema}/objects/{object}?profile=...` — authorized columns,
+- `GET /schemas/{schema}/objects/{object}?profile=...&datasource=...` — authorized columns,
   portable types, and primary/index attributes;
-- `GET /schemas/{schema}/objects/{object}/statistics?profile=...` — fully
+- `GET /schemas/{schema}/objects/{object}/statistics?profile=...&datasource=...` — fully
   bounded InnoDB table, partition, and subpartition statistics without an exact
   row count;
 - `POST /queries/explain` — only `EXPLAIN FORMAT=JSON` over a generated `SELECT`
@@ -57,7 +57,8 @@ adapter:
 - deadlines, server-side execution timeout, and concurrency/body/result
   limits;
 - mandatory structured audit events without SQL, values, or secrets;
-- multiple datasources with independent connection pools.
+- multiple datasources with independent connection pools and explicit
+  profile-datasource routing on every profile-scoped request.
 
 The MVP does not accept arbitrary SQL, `EXPLAIN ANALYZE`, client-defined joins,
 subqueries, unions, functions or raw expressions. Trusted views may contain joins
@@ -119,8 +120,9 @@ install -m 600 config/policy.example.yaml config/policy.yaml
 ```
 
 From 0.1.3, policies can reuse local YAML nodes with `$ref` and replace direct
-mapping fields with `$override`. One profile still routes to one datasource;
-clients select assigned profiles. See [the reference example](config/policy.references.yaml)
+mapping fields with `$override`. A profile has a nonempty datasource allowlist;
+clients explicitly select a pair assigned to both their principal and the
+profile. See [the reference example](config/policy.references.yaml)
 and [assembly rules and limits](docs/policy-configuration.md).
 All referenced files must also have mode `0600` and stay inside the main policy
 directory. Validate assembly and general semantics without database, HTTP or

@@ -43,64 +43,72 @@ for service in ("mysql", "mysql-rc"):
     assert "BACKUP_ADMIN" not in grants and "SHOW VIEW" not in grants
 
 capabilities = request("/capabilities")
-assert "routing-test" in json.dumps(capabilities) and "routing-rc" in json.dumps(capabilities)
+routing = next(profile for profile in capabilities["profiles"] if profile["name"] == "routing")
+assert {datasource["name"] for datasource in routing["datasources"]} == {
+    "integration-mysql", "integration-rc-mysql"}
 request("/health/ready")
 
-for contour, service in (("test", "mysql"), ("rc", "mysql-rc")):
-    profile = "routing-" + contour
-    discovery = request("/query-shapes?profile=" + profile)
+for contour, datasource, service in (("test", "integration-mysql", "mysql"),
+                                     ("rc", "integration-rc-mysql", "mysql-rc")):
+    profile = "routing"
+    discovery = request("/query-shapes?profile=" + profile + "&datasource=" + datasource)
     assert "marker_page" in json.dumps(discovery)
     assert "required_index" not in json.dumps(discovery)
     spec = {"source": {"schema": "application", "name": "routing_marker"},
             "projection": [{"kind": "field", "field": "id"}, {"kind": "field", "field": "contour"}],
             "order_by": [{"field": "id", "direction": "asc"}], "limit": 2}
-    result = request("/queries/select", {"profile": profile, "query": spec})
+    result = request("/queries/select", {"profile": profile, "datasource": datasource, "query": spec})
     assert result["rows"] == [["1", contour]]
-    request("/queries/explain", {"profile": profile, "query": spec})
-    result = request("/queries/select", {"kind": "keyset", "profile": profile, "shape": "marker_page",
+    request("/queries/explain", {"profile": profile, "datasource": datasource, "query": spec})
+    result = request("/queries/select", {"kind": "keyset", "profile": profile, "datasource": datasource, "shape": "marker_page",
                                         "query": spec, "page": {"kind": "first"}})
     assert result["rows"] == [["1", contour]]
     aggregate = {"mode": "scalar", "source": spec["source"],
                  "projection": [{"kind": "measure", "function": "count_all", "alias": "marker_count"}]}
-    result = request("/queries/aggregate", {"profile": profile, "query": aggregate})
+    result = request("/queries/aggregate", {"profile": profile, "datasource": datasource, "query": aggregate})
     assert result["rows"] == [["1"]]
     before = main_select_count(service)
     denied = dict(spec, projection=[{"kind": "field", "field": "hidden_value"}])
-    result = request("/queries/select", {"profile": profile, "query": denied}, status=403)
+    result = request("/queries/select", {"profile": profile, "datasource": datasource, "query": denied}, status=403)
     assert result["code"] == "DENIED_FIELD"
     denied = dict(spec, source={"schema": "application", "name": "orders"})
-    result = request("/queries/select", {"profile": profile, "query": denied}, status=403)
+    result = request("/queries/select", {"profile": profile, "datasource": datasource, "query": denied}, status=403)
     assert result["code"] == "DENIED_RESOURCE"
+    if contour == "rc":
+        result = request("/queries/aggregate", {
+            "profile": "numeric-byte", "datasource": datasource, "query": aggregate,
+        }, status=403)
+        assert result["code"] == "DENIED_OPERATION"
     assert main_select_count(service) == before
 
     # The same policy-curated plan rejections must survive routing overrides.
-    admission = "admission-reader" if contour == "test" else "admission-rc"
+    admission = "admission-reader"
     query = {"mode": "scalar", "source": {"schema": "application", "name": "orders"},
              "projection": [{"kind": "measure", "function": "count_all", "alias": "index_mismatch"}]}
-    result = request("/queries/aggregate", {"profile": admission, "query": query}, status=422)
+    result = request("/queries/aggregate", {"profile": admission, "datasource": datasource, "query": query}, status=422)
     assert result["code"] == "UNSUPPORTED_QUERY"
     keyset = {"source": query["source"], "projection": [{"kind": "field", "field": "id"},
               {"kind": "field", "field": "status", "alias": "index_mismatch"}],
               "order_by": [{"field": "id", "direction": "asc"}], "limit": 2}
-    result = request("/queries/select", {"kind": "keyset", "profile": admission,
+    result = request("/queries/select", {"kind": "keyset", "profile": admission, "datasource": datasource,
                      "shape": "plan_keyset_index_mismatch", "query": keyset, "page": {"kind": "first"}}, status=422)
     assert result["code"] == "UNSUPPORTED_QUERY"
     assert main_select_count(service) == before
 
     # Views retain the known MySQL SELECT-only limitation in both contours.
-    view_profile = "views-reader" if contour == "test" else "views-rc"
+    view_profile = "views-reader"
     view_spec = dict(spec, source={"schema": "application", "name": "Orders"},
                      projection=[{"kind": "field", "field": "id"}, {"kind": "field", "field": "status"}])
-    result = request("/queries/select", {"profile": view_profile, "query": view_spec})
+    result = request("/queries/select", {"profile": view_profile, "datasource": datasource, "query": view_spec})
     assert result["rows"] == [["1", "active"], ["2", "closed"]]
     before = main_select_count(service)
-    result = request("/queries/explain", {"profile": view_profile, "query": view_spec}, status=503)
+    result = request("/queries/explain", {"profile": view_profile, "datasource": datasource, "query": view_spec}, status=503)
     assert result["code"] == "DATABASE_UNAVAILABLE"
     view_aggregate = {"mode": "scalar", "source": view_spec["source"],
                       "projection": [{"kind": "measure", "function": "count_all", "alias": "row_count"}]}
-    result = request("/queries/aggregate", {"profile": view_profile, "query": view_aggregate}, status=503)
+    result = request("/queries/aggregate", {"profile": view_profile, "datasource": datasource, "query": view_aggregate}, status=503)
     assert result["code"] == "DATABASE_UNAVAILABLE"
-    result = request("/queries/select", {"kind": "keyset", "profile": view_profile, "shape": "Orders_pages",
+    result = request("/queries/select", {"kind": "keyset", "profile": view_profile, "datasource": datasource, "shape": "Orders_pages",
                      "query": view_spec, "page": {"kind": "first"}}, status=503)
     assert result["code"] == "DATABASE_UNAVAILABLE"
     assert main_select_count(service) == before

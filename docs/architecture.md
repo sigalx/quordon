@@ -172,7 +172,8 @@ sorting, limit и offset.
 
 ### `AuthorizedQuerySpec`
 
-Policy engine проверяет principal, profile, datasource, operation, resource,
+Policy engine сначала проверяет трёхстороннее пересечение principal/profile/
+datasource и создаёт непрозрачный `AuthorizedBinding`, затем проверяет operation, resource,
 fields, operators, aggregates и effective limits. Создание значения ограничено
 пакетом авторизации. Возвращаемые копии authorization token глубоко копируют
 bind payload bytes; вызывающий код не может изменить сохранённый запрос через
@@ -234,7 +235,7 @@ MVP не включает joins, subqueries, unions, raw expressions и поль
 3. Проверить Basic Auth и создать `Principal`.
 4. Строго десериализовать и валидировать API request.
 5. Получить immutable snapshot политики.
-6. Выбрать назначенный principal профиль и datasource.
+6. Авторизовать назначенную пару profile-datasource по пересечению allowlists.
 7. Проверить capability выбранного адаптера; при её отсутствии вернуть `501` без обращения к БД.
 8. Авторизовать `QuerySpec` и вычислить effective limits.
 9. Создать `AuthorizedQuerySpec`.

@@ -48,10 +48,10 @@ type SelectResult struct {
 
 func (s *Service) ListObjects(
 	ctx context.Context,
-	requestID, principal, clientIdentifier, profileName, schema string,
+	requestID, principal, clientIdentifier, profileName, datasource, schema string,
 ) (ObjectListResult, error) {
 	profile, limits, adapterName, err := s.prepareSchemaOperation(
-		ctx, requestID, principal, clientIdentifier, profileName,
+		ctx, requestID, principal, clientIdentifier, profileName, datasource,
 		domain.OperationListObjects, schema, "",
 	)
 	if err != nil {
@@ -67,15 +67,15 @@ func (s *Service) ListObjects(
 			adapterName, domain.OperationListObjects, nil, nil, semanticsStarted, err,
 		)
 	}
-	s.observeIdentifierSemantics(profileName, semantics)
+	s.observeIdentifierSemantics(profile.Binding.Key(), semantics)
 	authorized, err := s.policy.AuthorizeListObjects(
-		principal, profileName, schema, semantics,
+		profile.Binding, schema, semantics,
 	)
 	if err != nil {
 		reason := policy.ReasonDeniedOperation
 		policy.IsDenial(err, &reason)
 		if auditErr := s.writeDenial(
-			ctx, requestID, "", principal, clientIdentifier, profileName,
+			ctx, requestID, "", principal, clientIdentifier, profile.Binding.Profile(), profile.Binding.Datasource(),
 			domain.OperationListObjects, reason, "",
 		); auditErr != nil {
 			return ObjectListResult{}, &Error{Kind: ErrorServiceUnavailable, Err: auditErr}
@@ -89,7 +89,7 @@ func (s *Service) ListObjects(
 	); err != nil {
 		return ObjectListResult{}, err
 	}
-	releaseCapacity, ok := s.acquireCapacity(profileName)
+	releaseCapacity, ok := s.acquireCapacity(profile.Binding.Key())
 	if !ok {
 		return ObjectListResult{}, &Error{Kind: ErrorCapacity}
 	}
@@ -127,11 +127,11 @@ func (s *Service) ListObjects(
 
 func (s *Service) DescribeObject(
 	ctx context.Context,
-	requestID, principal, clientIdentifier, profileName string,
+	requestID, principal, clientIdentifier, profileName, datasource string,
 	object queryspec.ResourceRef,
 ) (ObjectDescriptionResult, error) {
 	profile, limits, adapterName, err := s.prepareSchemaOperation(
-		ctx, requestID, principal, clientIdentifier, profileName,
+		ctx, requestID, principal, clientIdentifier, profileName, datasource,
 		domain.OperationDescribeObject, object.Schema, object.Name,
 	)
 	if err != nil {
@@ -147,15 +147,15 @@ func (s *Service) DescribeObject(
 			adapterName, domain.OperationDescribeObject, nil, nil, semanticsStarted, err,
 		)
 	}
-	s.observeIdentifierSemantics(profileName, semantics)
+	s.observeIdentifierSemantics(profile.Binding.Key(), semantics)
 	authorized, err := s.policy.AuthorizeDescribeObject(
-		principal, profileName, object, semantics,
+		profile.Binding, object, semantics,
 	)
 	if err != nil {
 		reason := policy.ReasonDeniedOperation
 		policy.IsDenial(err, &reason)
 		if auditErr := s.writeDenial(
-			ctx, requestID, "", principal, clientIdentifier, profileName,
+			ctx, requestID, "", principal, clientIdentifier, profile.Binding.Profile(), profile.Binding.Datasource(),
 			domain.OperationDescribeObject, reason, "",
 		); auditErr != nil {
 			return ObjectDescriptionResult{}, &Error{Kind: ErrorServiceUnavailable, Err: auditErr}
@@ -169,7 +169,7 @@ func (s *Service) DescribeObject(
 	); err != nil {
 		return ObjectDescriptionResult{}, err
 	}
-	releaseCapacity, ok := s.acquireCapacity(profileName)
+	releaseCapacity, ok := s.acquireCapacity(profile.Binding.Key())
 	if !ok {
 		return ObjectDescriptionResult{}, &Error{Kind: ErrorCapacity}
 	}
@@ -331,17 +331,17 @@ func (s *Service) Select(
 	bodyBytes int,
 	request queryspec.Request,
 ) (SelectResult, error) {
-	profile, assigned := s.assignedProfile(principal, request.Profile)
-	if !assigned || !slices.Contains(profile.Operations, domain.OperationSelect) {
+	binding, assigned := s.assignedBinding(principal, request.Profile, request.Datasource, domain.OperationSelect)
+	if !assigned {
 		if err := s.writeDenial(
-			ctx, requestID, queryID, principal, clientIdentifier, request.Profile,
+			ctx, requestID, queryID, principal, clientIdentifier, request.Profile, request.Datasource,
 			domain.OperationSelect, policy.ReasonDeniedOperation, "",
 		); err != nil {
 			return SelectResult{}, &Error{Kind: ErrorServiceUnavailable, Err: err}
 		}
 		return SelectResult{}, &Error{Kind: ErrorDenied, ReasonCode: policy.ReasonDeniedOperation}
 	}
-	limits := s.policy.HardLimits().Min(profile.Limits)
+	limits := binding.Limits()
 	if bodyBytes > limits.MaxRequestBytes {
 		return SelectResult{}, &Error{Kind: ErrorTooLarge}
 	}
@@ -357,15 +357,15 @@ func (s *Service) Select(
 		return SelectResult{}, &Error{Kind: ErrorInvalid, Err: err}
 	}
 	queryShapeHash := queryspec.ShapeHash(validated.Spec())
-	if err := s.precheckSourceText(ctx, requestID, queryID, principal, clientIdentifier, request.Profile, profile, domain.OperationSelect, queryShapeHash, queryspec.UsesSourceText(validated.Spec())); err != nil {
+	if err := s.precheckSourceText(ctx, requestID, queryID, principal, clientIdentifier, binding, domain.OperationSelect, queryShapeHash, queryspec.UsesSourceText(validated.Spec())); err != nil {
 		return SelectResult{}, err
 	}
-	adapterName := s.databases.AdapterName(profile.Datasource)
-	if !slices.Contains(s.databases.Capabilities(profile.Datasource), domain.OperationSelect) {
+	adapterName := s.databases.AdapterName(binding.Datasource())
+	if !slices.Contains(s.databases.Capabilities(binding.Datasource()), domain.OperationSelect) {
 		if err := s.writeAudit(context.WithoutCancel(ctx), audit.Event{
 			Type: "query_completion", RequestID: requestID, QueryID: queryID, Principal: principal,
 			ClientIdentifier: clientIdentifier, PolicyProfile: request.Profile,
-			PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(), Datasource: profile.Datasource,
+			PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(), Datasource: binding.Datasource(),
 			Adapter: adapterName, Operation: string(domain.OperationSelect), Outcome: "not_implemented",
 			QueryShapeHash: queryShapeHash,
 		}); err != nil {
@@ -376,21 +376,21 @@ func (s *Service) Select(
 	executionContext, cancel := context.WithTimeout(ctx, limits.Deadline())
 	defer cancel()
 	semanticsStarted := time.Now()
-	semantics, err := s.databases.IdentifierSemantics(executionContext, profile.Datasource)
+	semantics, err := s.databases.IdentifierSemantics(executionContext, binding.Datasource())
 	if err != nil {
 		return SelectResult{}, s.completeQueryError(
 			ctx, requestID, queryID, principal, clientIdentifier, request.Profile,
-			profile.Datasource, adapterName, domain.OperationSelect, queryShapeHash,
+			binding.Datasource(), adapterName, domain.OperationSelect, queryShapeHash,
 			nil, nil, nil, semanticsStarted, err,
 		)
 	}
-	s.observeIdentifierSemantics(request.Profile, semantics)
-	authorized, err := s.policy.AuthorizeSelect(principal, request.Profile, validated, semantics)
+	s.observeIdentifierSemantics(binding.Key(), semantics)
+	authorized, err := s.policy.AuthorizeSelect(binding, validated, semantics)
 	if err != nil {
 		reason := policy.ReasonDeniedOperation
 		policy.IsDenial(err, &reason)
 		if auditErr := s.writeDenial(
-			ctx, requestID, queryID, principal, clientIdentifier, request.Profile,
+			ctx, requestID, queryID, principal, clientIdentifier, binding.Profile(), binding.Datasource(),
 			domain.OperationSelect, reason, queryShapeHash,
 		); auditErr != nil {
 			return SelectResult{}, &Error{Kind: ErrorServiceUnavailable, Err: auditErr}
@@ -402,11 +402,11 @@ func (s *Service) Select(
 	fields := authorized.ReferencedFields()
 	if err := s.writeAllowDecision(
 		ctx, requestID, queryID, principal, clientIdentifier, request.Profile,
-		profile.Datasource, adapterName, domain.OperationSelect, resources, fields, queryShapeHash,
+		binding.Datasource(), adapterName, domain.OperationSelect, resources, fields, queryShapeHash,
 	); err != nil {
 		return SelectResult{}, err
 	}
-	releaseCapacity, ok := s.acquireCapacity(request.Profile)
+	releaseCapacity, ok := s.acquireCapacity(binding.Key())
 	if !ok {
 		return SelectResult{}, &Error{Kind: ErrorCapacity}
 	}
@@ -416,14 +416,14 @@ func (s *Service) Select(
 	if databaseErr != nil {
 		return SelectResult{}, s.completeQueryError(
 			ctx, requestID, queryID, principal, clientIdentifier, request.Profile,
-			profile.Datasource, adapterName, domain.OperationSelect, queryShapeHash,
+			binding.Datasource(), adapterName, domain.OperationSelect, queryShapeHash,
 			resources, fields, nil, started, databaseErr,
 		)
 	}
 	if err := s.writeAudit(context.WithoutCancel(ctx), audit.Event{
 		Type: "query_completion", RequestID: requestID, QueryID: queryID, Principal: principal,
 		ClientIdentifier: clientIdentifier, PolicyProfile: request.Profile,
-		PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(), Datasource: profile.Datasource,
+		PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(), Datasource: binding.Datasource(),
 		Adapter: adapterName, Operation: string(domain.OperationSelect), Outcome: "success",
 		DurationMS: durationMilliseconds(started), QueryShapeHash: queryShapeHash,
 		ResultBytes: databaseResult.ResultBytes, Resources: resources, Fields: fields,
@@ -433,7 +433,7 @@ func (s *Service) Select(
 	}
 	return SelectResult{
 		QueryID: queryID, PolicyProfile: request.Profile, PolicyVersion: s.policy.Version(),
-		Datasource: profile.Datasource, Adapter: adapterName, Columns: databaseResult.Columns,
+		Datasource: binding.Datasource(), Adapter: adapterName, Columns: databaseResult.Columns,
 		Rows: databaseResult.Rows, RowCount: databaseResult.RowCount, Truncated: databaseResult.Truncated,
 		Limits: limits, Warnings: []string{},
 	}, nil
@@ -441,37 +441,37 @@ func (s *Service) Select(
 
 func (s *Service) prepareSchemaOperation(
 	ctx context.Context,
-	requestID, principal, clientIdentifier, profileName string,
+	requestID, principal, clientIdentifier, profileName, datasource string,
 	operation domain.Operation,
 	schema, object string,
 ) (profileResult profileState, limits domain.Limits, adapterName string, resultErr error) {
 	if !validSchemaCoordinates(operation, schema, object) {
 		return profileState{}, domain.Limits{}, "", &Error{Kind: ErrorInvalid}
 	}
-	profile, assigned := s.assignedProfile(principal, profileName)
-	if !assigned || !slices.Contains(profile.Operations, operation) {
+	binding, assigned := s.assignedBinding(principal, profileName, datasource, operation)
+	if !assigned {
 		if err := s.writeDenial(
-			ctx, requestID, "", principal, clientIdentifier, profileName,
+			ctx, requestID, "", principal, clientIdentifier, profileName, datasource,
 			operation, policy.ReasonDeniedOperation, "",
 		); err != nil {
 			return profileState{}, domain.Limits{}, "", &Error{Kind: ErrorServiceUnavailable, Err: err}
 		}
 		return profileState{}, domain.Limits{}, "", &Error{Kind: ErrorDenied, ReasonCode: policy.ReasonDeniedOperation}
 	}
-	limits = s.policy.HardLimits().Min(profile.Limits)
-	adapterName = s.databases.AdapterName(profile.Datasource)
-	if !slices.Contains(s.databases.Capabilities(profile.Datasource), operation) {
+	limits = binding.Limits()
+	adapterName = s.databases.AdapterName(binding.Datasource())
+	if !slices.Contains(s.databases.Capabilities(binding.Datasource()), operation) {
 		if err := s.writeAudit(context.WithoutCancel(ctx), audit.Event{
 			Type: "operation_completion", RequestID: requestID, Principal: principal,
 			ClientIdentifier: clientIdentifier, PolicyProfile: profileName,
-			PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(), Datasource: profile.Datasource,
+			PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(), Datasource: binding.Datasource(),
 			Adapter: adapterName, Operation: string(operation), Outcome: "not_implemented",
 		}); err != nil {
 			return profileState{}, domain.Limits{}, "", &Error{Kind: ErrorServiceUnavailable, Err: err}
 		}
 		return profileState{}, domain.Limits{}, "", &Error{Kind: ErrorNotImplemented}
 	}
-	return profileState{Datasource: profile.Datasource}, limits, adapterName, nil
+	return profileState{Datasource: binding.Datasource(), Binding: binding}, limits, adapterName, nil
 }
 
 func validSchemaCoordinates(operation domain.Operation, schema, object string) bool {
@@ -487,6 +487,7 @@ func validSchemaCoordinates(operation domain.Operation, schema, object string) b
 
 type profileState struct {
 	Datasource string
+	Binding    policy.AuthorizedBinding
 }
 
 func (s *Service) writeAllowDecision(

@@ -25,7 +25,7 @@ func TestUnsupportedViewStatisticsRuntimeMatchesOpenAPI(t *testing.T) {
 	defer contract.Release()
 	server, sink, closeDatabases := successfulContractServerWithAudit(t)
 	defer closeDatabases()
-	request := httptest.NewRequest(http.MethodGet, "http://quordon.test/schemas/app/objects/orders_view/statistics?profile=reader", nil)
+	request := httptest.NewRequest(http.MethodGet, "http://quordon.test/schemas/app/objects/orders_view/statistics?profile=reader&datasource=mysql", nil)
 	request.SetBasicAuth("client", "secret")
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
@@ -67,7 +67,7 @@ func TestTableStatisticsRuntimeRejectsBodiesBeforeProfileResolution(t *testing.T
 	for _, fixture := range fixtures {
 		t.Run(fixture.name, func(t *testing.T) {
 			request := httptest.NewRequest(
-				http.MethodGet, "/schemas/app/objects/orders/statistics?profile=reader", fixture.body,
+				http.MethodGet, "/schemas/app/objects/orders/statistics?profile=reader&datasource=mysql", fixture.body,
 			)
 			request.SetBasicAuth("client", "secret")
 			request.ContentLength = fixture.contentLength
@@ -92,7 +92,7 @@ func TestTableStatisticsAuthenticatesBeforeBodyValidation(t *testing.T) {
 	server, sink, closeDatabases := successfulContractServerWithAudit(t)
 	defer closeDatabases()
 	request := httptest.NewRequest(
-		http.MethodGet, "/schemas/app/objects/orders/statistics?profile=reader", strings.NewReader("x"),
+		http.MethodGet, "/schemas/app/objects/orders/statistics?profile=reader&datasource=mysql", strings.NewReader("x"),
 	)
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
@@ -109,7 +109,7 @@ func TestTableStatisticsRuntimeRejectsUnsupportedMethodsBeforeAuthentication(t *
 	server, sink, closeDatabases := successfulContractServerWithAudit(t)
 	defer closeDatabases()
 	for _, method := range []string{http.MethodHead, http.MethodPost, http.MethodPut, http.MethodOptions} {
-		request := httptest.NewRequest(method, "/schemas/app/objects/orders/statistics?profile=reader", nil)
+		request := httptest.NewRequest(method, "/schemas/app/objects/orders/statistics?profile=reader&datasource=mysql", nil)
 		response := httptest.NewRecorder()
 		server.Handler().ServeHTTP(response, request)
 		if response.Code != http.StatusMethodNotAllowed || response.Header().Get("Allow") != http.MethodGet ||
@@ -129,7 +129,7 @@ func TestTableStatisticsContractRejectsNoncanonicalMetrics(t *testing.T) {
 	contract := loadTableStatisticsContractValidator(t)
 	defer contract.Release()
 	request := httptest.NewRequest(
-		http.MethodGet, "http://quordon.test/schemas/app/objects/orders/statistics?profile=reader", nil,
+		http.MethodGet, "http://quordon.test/schemas/app/objects/orders/statistics?profile=reader&datasource=mysql", nil,
 	)
 	request.SetBasicAuth("client", "secret")
 	validBody := `{"policy_profile":"reader","policy_version":"1","datasource":"mysql","adapter":"mysql8","schema":"app","name":"orders","observed_at":"2026-09-02T12:00:00Z","engine":"InnoDB","table":{"estimated_rows":{"value":"1","estimated":true},"data_bytes":null,"index_bytes":null,"auto_increment":null},"partitioning":{"kind":"none"}}`
@@ -161,7 +161,7 @@ func TestTableStatisticsContractAcceptsEveryRuntimePartitioningBranch(t *testing
 	contract := loadTableStatisticsContractValidator(t)
 	defer contract.Release()
 	request := httptest.NewRequest(
-		http.MethodGet, "http://quordon.test/schemas/app/objects/orders/statistics?profile=reader", nil,
+		http.MethodGet, "http://quordon.test/schemas/app/objects/orders/statistics?profile=reader&datasource=mysql", nil,
 	)
 	request.SetBasicAuth("client", "secret")
 	const prefix = `{"policy_profile":"reader","policy_version":"1","datasource":"mysql","adapter":"mysql8","schema":"app","name":"orders","observed_at":"2026-09-02T12:00:00.123456789Z","engine":"InnoDB","table":{"estimated_rows":{"value":"18446744073709551615","estimated":true},"data_bytes":null,"index_bytes":{"value":"0","estimated":true},"auto_increment":{"value":"1","estimated":false}},"partitioning":`

@@ -1,4 +1,4 @@
-datasource: integration-mysql
+datasources: [integration-mysql]
 operations: [select, explain_select, aggregate, select_keyset, list_query_shapes]
 resources:
   schemas:

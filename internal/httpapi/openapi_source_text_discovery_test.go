@@ -25,7 +25,7 @@ func TestSourceTextDiscoveryRuntimePayloadMatchesOpenAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot := policy.NewSnapshot(cfg)
-	discovery, err := snapshot.BuildQueryShapeDiscovery("diagnostic-reader", domain.AdapterMySQL8, domain.IdentifierSemantics{CaseInsensitiveFields: true})
+	discovery, err := snapshot.BuildQueryShapeDiscovery("diagnostic-reader", "integration-mysql", domain.AdapterMySQL8, domain.IdentifierSemantics{CaseInsensitiveFields: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,11 @@ func TestSourceTextDiscoveryRuntimePayloadMatchesOpenAPI(t *testing.T) {
 			}
 		}
 	}
-	authorized, err := snapshot.AuthorizeQueryShapeList(principal, "contract-credential", "diagnostic-reader", &discovery)
+	binding, err := snapshot.AuthorizeBinding(principal, "diagnostic-reader", "integration-mysql", domain.OperationListQueryShapes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorized, err := snapshot.AuthorizeQueryShapeList(binding, "contract-credential", &discovery)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +49,7 @@ func TestSourceTextDiscoveryRuntimePayloadMatchesOpenAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodGet, "http://quordon.test/query-shapes?profile=diagnostic-reader", nil)
+	request := httptest.NewRequest(http.MethodGet, "http://quordon.test/query-shapes?profile=diagnostic-reader&datasource=integration-mysql", nil)
 	request.SetBasicAuth("contract-client", "contract-password")
 	for _, fixture := range []struct {
 		body  string

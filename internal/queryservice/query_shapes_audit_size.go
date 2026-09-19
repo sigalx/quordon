@@ -3,10 +3,36 @@ package queryservice
 import (
 	"errors"
 	"sort"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/sigalx/quordon/internal/audit"
 )
+
+func moreConservativeAuditIdentity(candidate, current queryShapeAuditIdentity) bool {
+	if candidate.principal == "" || candidate.clientIdentifier == "" {
+		return false
+	}
+	if current.principal == "" || current.clientIdentifier == "" {
+		return true
+	}
+	candidateSize := auditIdentityJSONSize(candidate)
+	currentSize := auditIdentityJSONSize(current)
+	if candidateSize != currentSize {
+		return candidateSize > currentSize
+	}
+	if comparison := strings.Compare(candidate.principal, current.principal); comparison != 0 {
+		return comparison > 0
+	}
+	return candidate.clientIdentifier > current.clientIdentifier
+}
+
+func auditIdentityJSONSize(identity queryShapeAuditIdentity) int {
+	counter := newBoundedJSONSize(int(^uint(0) >> 1))
+	counter.addString(identity.principal)
+	counter.addString(identity.clientIdentifier)
+	return counter.size
+}
 
 // queryShapeAuditEventJSONSizeWithin counts the exact encoding/json payload
 // size for the closed audit.Event representation used by startup preflights.
@@ -62,6 +88,8 @@ func queryShapeAuditEventJSONSizeWithin(event audit.Event, maximum int) (int, bo
 	addIntegerField("shape_count", int64(event.ShapeCount), true)
 	addStringField("requested_profile_hash", event.RequestedProfileHash, true)
 	addIntegerField("requested_profile_bytes", int64(event.RequestedProfileBytes), true)
+	addStringField("requested_datasource_hash", event.RequestedDatasourceHash, true)
+	addIntegerField("requested_datasource_bytes", int64(event.RequestedDatasourceBytes), true)
 	if len(event.Resources) != 0 {
 		counter.addObjectField("resources", &first)
 		counter.add(1) // [

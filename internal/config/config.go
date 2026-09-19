@@ -29,6 +29,7 @@ const (
 	maxSupportedExpressionDepth = 64
 	maxSupportedParameters      = 10_000
 	maxSupportedConcurrency     = 1024
+	maxSupportedBindings        = 4096
 	maxSupportedPoolConnections = 1024
 	maxSupportedConnLifetimeSec = 24 * 60 * 60
 	maxSupportedQueryShapes     = 1000
@@ -66,7 +67,8 @@ type BasicUser struct {
 }
 
 type Principal struct {
-	Profiles []string `yaml:"profiles"`
+	Profiles    []string `yaml:"profiles"`
+	Datasources []string `yaml:"datasources"`
 }
 
 type Datasource struct {
@@ -85,11 +87,11 @@ type PoolConfig struct {
 }
 
 type Profile struct {
-	Datasource string             `yaml:"datasource"`
-	Operations []domain.Operation `yaml:"operations"`
-	Resources  ResourcePolicy     `yaml:"resources"`
-	Query      QueryPolicy        `yaml:"query"`
-	Limits     domain.Limits      `yaml:"limits"`
+	Datasources []string           `yaml:"datasources"`
+	Operations  []domain.Operation `yaml:"operations"`
+	Resources   ResourcePolicy     `yaml:"resources"`
+	Query       QueryPolicy        `yaml:"query"`
+	Limits      domain.Limits      `yaml:"limits"`
 }
 
 type ResourcePolicy struct {
@@ -572,9 +574,27 @@ func (c Config) Validate() error {
 		if duplicates(principal.Profiles) {
 			return fmt.Errorf("principals.%s.profiles contains duplicates", name)
 		}
+		if len(principal.Datasources) == 0 {
+			return fmt.Errorf("principals.%s.datasources must not be empty", name)
+		}
+		if duplicates(principal.Datasources) {
+			return fmt.Errorf("principals.%s.datasources contains duplicates", name)
+		}
+		for _, datasource := range principal.Datasources {
+			if datasource == "" {
+				return fmt.Errorf("principals.%s.datasources must not contain empty names", name)
+			}
+			if _, ok := c.Datasources[datasource]; !ok {
+				return fmt.Errorf("principals.%s references unknown datasource %q", name, datasource)
+			}
+		}
 		for _, profile := range principal.Profiles {
-			if _, ok := c.Profiles[profile]; !ok {
+			profileConfig, ok := c.Profiles[profile]
+			if !ok {
 				return fmt.Errorf("principals.%s references unknown profile %q", name, profile)
+			}
+			if !hasIntersection(principal.Datasources, profileConfig.Datasources) {
+				return fmt.Errorf("principals.%s profile %q has no assigned datasource", name, profile)
 			}
 		}
 	}
@@ -622,12 +642,28 @@ func (c Config) Validate() error {
 		}
 	}
 
+	totalBindings := 0
 	for name, profile := range c.Profiles {
 		if err := validateName("profiles", name); err != nil {
 			return err
 		}
-		if _, ok := c.Datasources[profile.Datasource]; !ok {
-			return fmt.Errorf("profiles.%s references unknown datasource %q", name, profile.Datasource)
+		if len(profile.Datasources) == 0 {
+			return fmt.Errorf("profiles.%s.datasources must not be empty", name)
+		}
+		if duplicates(profile.Datasources) {
+			return fmt.Errorf("profiles.%s.datasources contains duplicates", name)
+		}
+		totalBindings += len(profile.Datasources)
+		if totalBindings > maxSupportedBindings {
+			return fmt.Errorf("profile-datasource bindings must not exceed %d", maxSupportedBindings)
+		}
+		for _, datasource := range profile.Datasources {
+			if datasource == "" {
+				return fmt.Errorf("profiles.%s.datasources must not contain empty names", name)
+			}
+			if _, ok := c.Datasources[datasource]; !ok {
+				return fmt.Errorf("profiles.%s references unknown datasource %q", name, datasource)
+			}
 		}
 		if len(profile.Operations) == 0 {
 			return fmt.Errorf("profiles.%s.operations must not be empty", name)
@@ -698,6 +734,15 @@ func (c Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+func hasIntersection(left, right []string) bool {
+	for _, candidate := range left {
+		if slices.Contains(right, candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 func validateLimits(path string, limits domain.Limits) error {

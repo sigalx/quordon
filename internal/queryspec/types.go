@@ -30,8 +30,9 @@ var (
 )
 
 type Request struct {
-	Profile string `json:"profile"`
-	Query   Spec   `json:"query"`
+	Profile    string `json:"profile"`
+	Datasource string `json:"datasource"`
+	Query      Spec   `json:"query"`
 }
 
 type Spec struct {

@@ -303,7 +303,7 @@ func NewManager(cfg config.Config, resolver secrets.Resolver, adapters ...Adapte
 		}
 		var sourceTextProblem error
 		for profileName, profile := range cfg.Profiles {
-			if profile.Datasource == name && config.QueryPolicyUsesSourceText(profile.Query) && !slices.Contains(features, domain.FeatureSourceText) {
+			if slices.Contains(profile.Datasources, name) && config.QueryPolicyUsesSourceText(profile.Query) && !slices.Contains(features, domain.FeatureSourceText) {
 				sourceTextProblem = &ConfigurationError{Err: fmt.Errorf("profile %q requires unsupported source_text feature", profileName)}
 				break
 			}

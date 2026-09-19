@@ -39,32 +39,32 @@ var selectRequestContractFixtures = []selectRequestContractFixture{
 	{
 		name:  "field select",
 		valid: true,
-		body:  `{"profile":"reader","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"order_by":[{"field":"id","direction":"asc"}],"limit":10}}`,
+		body:  `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"order_by":[{"field":"id","direction":"asc"}],"limit":10}}`,
 	},
 	{
 		name:  "RFC 3339 lower-case date-time separators",
 		valid: true,
-		body:  `{"profile":"reader","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"created_at","operator":"eq","values":[{"type":"datetime","value":"2026-01-01t00:00:00z"}]}}}`,
+		body:  `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"created_at","operator":"eq","values":[{"type":"datetime","value":"2026-01-01t00:00:00z"}]}}}`,
 	},
 	{
 		name: "empty projection",
-		body: `{"profile":"reader","query":{"source":{"schema":"app","name":"orders"},"projection":[]}}`,
+		body: `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[]}}`,
 	},
 	{
 		name: "invalid source identifier",
-		body: `{"profile":"reader","query":{"source":{"schema":"bad-name","name":"orders"},"projection":[{"kind":"field","field":"id"}]}}`,
+		body: `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"bad-name","name":"orders"},"projection":[{"kind":"field","field":"id"}]}}`,
 	},
 	{
 		name: "invalid order direction",
-		body: `{"profile":"reader","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"order_by":[{"field":"id","direction":"sideways"}]}}`,
+		body: `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"order_by":[{"field":"id","direction":"sideways"}]}}`,
 	},
 	{
 		name: "aggregate projection",
-		body: `{"profile":"reader","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"aggregate","function":"count"}]}}`,
+		body: `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"aggregate","function":"count"}]}}`,
 	},
 	{
 		name: "typed value mismatch",
-		body: `{"profile":"reader","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"active","operator":"eq","values":[{"type":"boolean","value":"true"}]}}}`,
+		body: `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"active","operator":"eq","values":[{"type":"boolean","value":"true"}]}}}`,
 	},
 }
 
@@ -72,88 +72,88 @@ var aggregateRequestContractFixtures = []selectRequestContractFixture{
 	{
 		name:  "scalar aggregate",
 		valid: true,
-		body:  `{"profile":"analytics","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}]}}`,
+		body:  `{"profile":"analytics","datasource":"mysql","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}]}}`,
 	},
 	{
 		name:  "case-folded output collision is transport-valid",
 		valid: true,
-		body:  `{"profile":"analytics","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"},{"kind":"measure","function":"count_all","alias":"TOTAL"}]}}`,
+		body:  `{"profile":"analytics","datasource":"mysql","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"},{"kind":"measure","function":"count_all","alias":"TOTAL"}]}}`,
 	},
 	{
 		name:  "grouped aggregate",
 		valid: true,
-		body:  `{"profile":"analytics","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"dimension","field":"status"},{"kind":"measure","function":"count_all","alias":"total"}],"order_by":[{"kind":"measure","alias":"total","direction":"desc"}],"limit":10}}`,
+		body:  `{"profile":"analytics","datasource":"mysql","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"dimension","field":"status"},{"kind":"measure","function":"count_all","alias":"total"}],"order_by":[{"kind":"measure","alias":"total","direction":"desc"}],"limit":10}}`,
 	},
 	{
 		name:  "grouped UTC time bucket",
 		valid: true,
-		body:  `{"profile":"analytics","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"time_bucket","field":"created_at","unit":"day","timezone":"UTC","alias":"created_day"},{"kind":"measure","function":"count_all","alias":"total"}],"order_by":[{"kind":"time_bucket","alias":"created_day","direction":"asc"}],"limit":10}}`,
+		body:  `{"profile":"analytics","datasource":"mysql","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"time_bucket","field":"created_at","unit":"day","timezone":"UTC","alias":"created_day"},{"kind":"measure","function":"count_all","alias":"total"}],"order_by":[{"kind":"time_bucket","alias":"created_day","direction":"asc"}],"limit":10}}`,
 	},
 	{
 		name: "time bucket missing timezone",
-		body: `{"profile":"analytics","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"time_bucket","field":"created_at","unit":"day","alias":"created_day"},{"kind":"measure","function":"count_all","alias":"total"}],"limit":10}}`,
+		body: `{"profile":"analytics","datasource":"mysql","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"time_bucket","field":"created_at","unit":"day","alias":"created_day"},{"kind":"measure","function":"count_all","alias":"total"}],"limit":10}}`,
 	},
 	{
 		name: "time bucket unknown unit",
-		body: `{"profile":"analytics","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"time_bucket","field":"created_at","unit":"minute","timezone":"UTC","alias":"created_day"},{"kind":"measure","function":"count_all","alias":"total"}],"limit":10}}`,
+		body: `{"profile":"analytics","datasource":"mysql","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"time_bucket","field":"created_at","unit":"minute","timezone":"UTC","alias":"created_day"},{"kind":"measure","function":"count_all","alias":"total"}],"limit":10}}`,
 	},
 	{
 		name:  "integral exponent and canonical base64 binds",
 		valid: true,
-		body:  `{"profile":"analytics","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"group","operator":"and","expressions":[{"kind":"predicate","field":"id","operator":"eq","values":[{"type":"integer","value":1e2}]},{"kind":"predicate","field":"payload","operator":"eq","values":[{"type":"bytes","value":"YQ=="}]}]}}}`,
+		body:  `{"profile":"analytics","datasource":"mysql","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"group","operator":"and","expressions":[{"kind":"predicate","field":"id","operator":"eq","values":[{"type":"integer","value":1e2}]},{"kind":"predicate","field":"payload","operator":"eq","values":[{"type":"bytes","value":"YQ=="}]}]}}}`,
 	},
 	{
 		name:  "large negative int64 bind",
 		valid: true,
-		body:  `{"profile":"analytics","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"predicate","field":"id","operator":"eq","values":[{"type":"integer","value":-9223372036854775000}]}}}`,
+		body:  `{"profile":"analytics","datasource":"mysql","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"predicate","field":"id","operator":"eq","values":[{"type":"integer","value":-9223372036854775000}]}}}`,
 	},
 	{
 		name: "missing measure alias",
-		body: `{"profile":"analytics","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all"}]}}`,
+		body: `{"profile":"analytics","datasource":"mysql","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all"}]}}`,
 	},
 	{
 		name: "scalar limit",
-		body: `{"profile":"analytics","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"limit":1}}`,
+		body: `{"profile":"analytics","datasource":"mysql","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"limit":1}}`,
 	},
 	{
 		name: "grouped missing limit",
-		body: `{"profile":"analytics","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"dimension","field":"status"},{"kind":"measure","function":"count_all","alias":"total"}]}}`,
+		body: `{"profile":"analytics","datasource":"mysql","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"dimension","field":"status"},{"kind":"measure","function":"count_all","alias":"total"}]}}`,
 	},
 	{
 		name: "dimension branch with alias",
-		body: `{"profile":"analytics","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"dimension","field":"status","alias":"state"},{"kind":"measure","function":"count_all","alias":"total"}],"limit":10}}`,
+		body: `{"profile":"analytics","datasource":"mysql","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"dimension","field":"status","alias":"state"},{"kind":"measure","function":"count_all","alias":"total"}],"limit":10}}`,
 	},
 	{
 		name: "typed value mismatch",
-		body: `{"profile":"analytics","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"predicate","field":"active","operator":"eq","values":[{"type":"boolean","value":"true"}]}}}`,
+		body: `{"profile":"analytics","datasource":"mysql","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"predicate","field":"active","operator":"eq","values":[{"type":"boolean","value":"true"}]}}}`,
 	},
 	{
 		name: "duplicate filter expressions",
-		body: `{"profile":"analytics","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"group","operator":"and","expressions":[{"kind":"predicate","field":"status","operator":"eq","values":[{"type":"string","value":"active"}]},{"kind":"predicate","field":"status","operator":"eq","values":[{"type":"string","value":"active"}]}]}}}`,
+		body: `{"profile":"analytics","datasource":"mysql","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"group","operator":"and","expressions":[{"kind":"predicate","field":"status","operator":"eq","values":[{"type":"string","value":"active"}]},{"kind":"predicate","field":"status","operator":"eq","values":[{"type":"string","value":"active"}]}]}}}`,
 	},
 	{
 		name: "JSON-equal numeric duplicate filter expressions",
-		body: `{"profile":"analytics","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"group","operator":"and","expressions":[{"kind":"predicate","field":"id","operator":"eq","values":[{"type":"integer","value":1}]},{"kind":"predicate","field":"id","operator":"eq","values":[{"type":"integer","value":1.0}]}]}}}`,
+		body: `{"profile":"analytics","datasource":"mysql","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"group","operator":"and","expressions":[{"kind":"predicate","field":"id","operator":"eq","values":[{"type":"integer","value":1}]},{"kind":"predicate","field":"id","operator":"eq","values":[{"type":"integer","value":1.0}]}]}}}`,
 	},
 	{
 		name: "case-folded query key",
-		body: `{"profile":"analytics","Query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}]}}`,
+		body: `{"profile":"analytics","datasource":"mysql","Query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}]}}`,
 	},
 	{
 		name: "null optional filter",
-		body: `{"profile":"analytics","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"filter":null}}`,
+		body: `{"profile":"analytics","datasource":"mysql","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"filter":null}}`,
 	},
 	{
 		name: "integer bind overflow",
-		body: `{"profile":"analytics","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"predicate","field":"id","operator":"eq","values":[{"type":"integer","value":9223372036854775808}]}}}`,
+		body: `{"profile":"analytics","datasource":"mysql","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"predicate","field":"id","operator":"eq","values":[{"type":"integer","value":9223372036854775808}]}}}`,
 	},
 	{
 		name: "non-integral integer bind",
-		body: `{"profile":"analytics","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"predicate","field":"id","operator":"eq","values":[{"type":"integer","value":1.5}]}}}`,
+		body: `{"profile":"analytics","datasource":"mysql","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"predicate","field":"id","operator":"eq","values":[{"type":"integer","value":1.5}]}}}`,
 	},
 	{
 		name: "non-canonical base64 bind",
-		body: `{"profile":"analytics","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"predicate","field":"payload","operator":"eq","values":[{"type":"bytes","value":"YR=="}]}}}`,
+		body: `{"profile":"analytics","datasource":"mysql","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"predicate","field":"payload","operator":"eq","values":[{"type":"bytes","value":"YR=="}]}}}`,
 	},
 }
 
@@ -275,23 +275,23 @@ func TestSuccessfulNewHandlersMatchOpenAPI31(t *testing.T) {
 	}{
 		{
 			name: "object list", method: http.MethodGet,
-			path: "/schemas/app/objects?profile=reader",
+			path: "/schemas/app/objects?profile=reader&datasource=mysql",
 		},
 		{
 			name: "object description", method: http.MethodGet,
-			path: "/schemas/app/objects/orders?profile=reader",
+			path: "/schemas/app/objects/orders?profile=reader&datasource=mysql",
 		},
 		{
 			name: "object statistics", method: http.MethodGet,
-			path: "/schemas/app/objects/orders/statistics?profile=reader",
+			path: "/schemas/app/objects/orders/statistics?profile=reader&datasource=mysql",
 		},
 		{
 			name: "bounded select", method: http.MethodPost, path: "/queries/select",
-			body: `{"profile":"reader","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"limit":2}}`,
+			body: `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"limit":2}}`,
 		},
 		{
 			name: "grouped aggregate", method: http.MethodPost, path: "/queries/aggregate",
-			body: `{"profile":"reader","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"dimension","field":"id"},{"kind":"measure","function":"count_all","alias":"total"}],"limit":2}}`,
+			body: `{"profile":"reader","datasource":"mysql","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"dimension","field":"id"},{"kind":"measure","function":"count_all","alias":"total"}],"limit":2}}`,
 		},
 	}
 	for _, fixture := range fixtures {
@@ -431,7 +431,7 @@ func TestSuccessfulTimeBucketHandlerMatchesOpenAPI31(t *testing.T) {
 	defer contract.Release()
 	server, _, closeDatabases := successfulTimeBucketContractServer(t)
 	defer closeDatabases()
-	body := `{"profile":"reader","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"time_bucket","field":"created_at","unit":"day","timezone":"UTC","alias":"created_day"},{"kind":"measure","function":"count_all","alias":"daily_count"}],"order_by":[{"kind":"time_bucket","alias":"created_day","direction":"asc"}],"limit":10}}`
+	body := `{"profile":"reader","datasource":"mysql","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"time_bucket","field":"created_at","unit":"day","timezone":"UTC","alias":"created_day"},{"kind":"measure","function":"count_all","alias":"daily_count"}],"order_by":[{"kind":"time_bucket","alias":"created_day","direction":"asc"}],"limit":10}}`
 	runtimeRequest := newContractRequest(http.MethodPost, "/queries/aggregate", body)
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, runtimeRequest)
@@ -499,14 +499,14 @@ func successfulContractServerWithOptions(t *testing.T, withTimeBucket, withKeyse
 			},
 		}},
 		Principals: map[string]config.Principal{
-			"contract-client": {Profiles: []string{"reader"}},
+			"contract-client": {Profiles: []string{"reader"}, Datasources: []string{"mysql"}},
 		},
 		Datasources: map[string]config.Datasource{
 			"mysql": {Adapter: domain.AdapterMySQL8, DSN: "opaque"},
 		},
 		Profiles: map[string]config.Profile{
 			"reader": {
-				Datasource: "mysql",
+				Datasources: []string{"mysql"},
 				Operations: []domain.Operation{
 					domain.OperationListObjects, domain.OperationDescribeObject,
 					domain.OperationDescribeObjectStatistics, domain.OperationSelect,
@@ -645,7 +645,7 @@ func TestMetadataQueryParametersMatchDocumentedOpenAPISemantics(t *testing.T) {
 		semanticStrict bool
 	}{
 		{
-			name: "list with one profile", path: "/schemas/application/objects?profile=explain",
+			name: "list with one profile", path: "/schemas/application/objects?profile=explain&datasource=mysql",
 			openAPIValid: true, wantStatus: http.StatusForbidden,
 		},
 		{
@@ -653,47 +653,63 @@ func TestMetadataQueryParametersMatchDocumentedOpenAPISemantics(t *testing.T) {
 			openAPIValid: false, wantStatus: http.StatusBadRequest,
 		},
 		{
-			name: "list with unknown parameter", path: "/schemas/application/objects?profile=explain&extra=value",
-			openAPIValid: true, wantStatus: http.StatusBadRequest, semanticStrict: true,
-		},
-		{
-			name: "list with repeated profile", path: "/schemas/application/objects?profile=explain&profile=other",
-			openAPIValid: true, wantStatus: http.StatusBadRequest, semanticStrict: true,
-		},
-		{
-			name: "describe with unknown parameter", path: "/schemas/application/objects/orders?profile=explain&extra=value",
-			openAPIValid: true, wantStatus: http.StatusBadRequest, semanticStrict: true,
-		},
-		{
-			name: "describe with repeated profile", path: "/schemas/application/objects/orders?profile=explain&profile=other",
-			openAPIValid: true, wantStatus: http.StatusBadRequest, semanticStrict: true,
-		},
-		{
-			name: "list with invalid UTF-8 profile", path: "/schemas/application/objects?profile=%FF",
-			openAPIValid: true, wantStatus: http.StatusBadRequest, semanticStrict: true,
-		},
-		{
-			name: "describe with invalid UTF-8 profile", path: "/schemas/application/objects/orders?profile=%FF",
-			openAPIValid: true, wantStatus: http.StatusBadRequest, semanticStrict: true,
-		},
-		{
-			name: "statistics with unknown parameter", path: "/schemas/application/objects/orders/statistics?profile=explain&extra=value",
-			openAPIValid: true, wantStatus: http.StatusBadRequest, semanticStrict: true,
-		},
-		{
-			name: "statistics with repeated profile", path: "/schemas/application/objects/orders/statistics?profile=explain&profile=other",
-			openAPIValid: true, wantStatus: http.StatusBadRequest, semanticStrict: true,
-		},
-		{
-			name: "statistics with invalid UTF-8 profile", path: "/schemas/application/objects/orders/statistics?profile=%FF",
-			openAPIValid: true, wantStatus: http.StatusBadRequest, semanticStrict: true,
-		},
-		{
-			name: "statistics with invalid schema", path: "/schemas/bad-name/objects/orders/statistics?profile=explain",
+			name: "list without datasource", path: "/schemas/application/objects?profile=explain",
 			openAPIValid: false, wantStatus: http.StatusBadRequest,
 		},
 		{
-			name: "statistics with invalid object", path: "/schemas/application/objects/bad-name/statistics?profile=explain",
+			name: "list with unknown parameter", path: "/schemas/application/objects?profile=explain&datasource=mysql&extra=value",
+			openAPIValid: true, wantStatus: http.StatusBadRequest, semanticStrict: true,
+		},
+		{
+			name: "list with repeated profile", path: "/schemas/application/objects?profile=explain&datasource=mysql&profile=other",
+			openAPIValid: true, wantStatus: http.StatusBadRequest, semanticStrict: true,
+		},
+		{
+			name: "list with repeated datasource", path: "/schemas/application/objects?profile=explain&datasource=mysql&datasource=other",
+			openAPIValid: true, wantStatus: http.StatusBadRequest, semanticStrict: true,
+		},
+		{
+			name: "list with case-folded datasource", path: "/schemas/application/objects?profile=explain&Datasource=mysql",
+			openAPIValid: false, wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "describe with unknown parameter", path: "/schemas/application/objects/orders?profile=explain&datasource=mysql&extra=value",
+			openAPIValid: true, wantStatus: http.StatusBadRequest, semanticStrict: true,
+		},
+		{
+			name: "describe with repeated profile", path: "/schemas/application/objects/orders?profile=explain&datasource=mysql&profile=other",
+			openAPIValid: true, wantStatus: http.StatusBadRequest, semanticStrict: true,
+		},
+		{
+			name: "list with invalid UTF-8 profile", path: "/schemas/application/objects?profile=%FF&datasource=mysql",
+			openAPIValid: true, wantStatus: http.StatusBadRequest, semanticStrict: true,
+		},
+		{
+			name: "describe with invalid UTF-8 profile", path: "/schemas/application/objects/orders?profile=%FF&datasource=mysql",
+			openAPIValid: true, wantStatus: http.StatusBadRequest, semanticStrict: true,
+		},
+		{
+			name: "describe with invalid UTF-8 datasource", path: "/schemas/application/objects/orders?profile=explain&datasource=%FF",
+			openAPIValid: true, wantStatus: http.StatusBadRequest, semanticStrict: true,
+		},
+		{
+			name: "statistics with unknown parameter", path: "/schemas/application/objects/orders/statistics?profile=explain&datasource=mysql&extra=value",
+			openAPIValid: true, wantStatus: http.StatusBadRequest, semanticStrict: true,
+		},
+		{
+			name: "statistics with repeated profile", path: "/schemas/application/objects/orders/statistics?profile=explain&datasource=mysql&profile=other",
+			openAPIValid: true, wantStatus: http.StatusBadRequest, semanticStrict: true,
+		},
+		{
+			name: "statistics with invalid UTF-8 profile", path: "/schemas/application/objects/orders/statistics?profile=%FF&datasource=mysql",
+			openAPIValid: true, wantStatus: http.StatusBadRequest, semanticStrict: true,
+		},
+		{
+			name: "statistics with invalid schema", path: "/schemas/bad-name/objects/orders/statistics?profile=explain&datasource=mysql",
+			openAPIValid: false, wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "statistics with invalid object", path: "/schemas/application/objects/bad-name/statistics?profile=explain&datasource=mysql",
 			openAPIValid: false, wantStatus: http.StatusBadRequest,
 		},
 	}

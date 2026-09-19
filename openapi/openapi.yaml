@@ -2,7 +2,7 @@
 openapi: 3.1.0
 info:
   title: Quordon API
-  version: 1.5.0
+  version: 1.6.0
   description: >-
     Policy-controlled gateway for agent access to infrastructure. The current
     MVP accepts a structured QuerySpec, never raw SQL, and implements
@@ -10,6 +10,9 @@ info:
     SELECT, bounded curated
     aggregates, and JSON EXPLAIN for MySQL 8.x
     (>= 8.0 and < 9.0). MariaDB is not supported.
+    Contract 1.6 is intentionally breaking within API major 1: every
+    profile-scoped operation requires an explicit datasource, and legacy
+    clients are not accepted.
     One process implements one API major version; a border proxy may add a
     public version prefix.
 
@@ -104,9 +107,9 @@ paths:
         selected profile. Policy-denied objects are omitted before
         applying the effective result-byte limit, so hidden metadata does not
         consume the profile budget. Metadata responses are never partial. The
-        query parameter set is closed: profile must occur exactly once and any
-        additional or repeated query parameter and any profile that is not
-        valid UTF-8 produces 400 INVALID_REQUEST. This strictness is an
+        query parameter set is closed: profile and datasource must each occur
+        exactly once. Any additional or repeated query parameter, or either
+        value not being valid UTF-8, produces 400 INVALID_REQUEST. This strictness is an
         application semantic represented by the
         x-quordon-strict-query-parameters extension because OpenAPI parameter
         objects do not define a closed query-string object.
@@ -115,6 +118,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/SchemaName"
         - $ref: "#/components/parameters/Profile"
+        - $ref: "#/components/parameters/Datasource"
       responses:
         "200":
           description: Complete policy-filtered object list.
@@ -155,8 +159,8 @@ paths:
         denied, or non-table object produces the same NOT_FOUND response. The
         effective result-byte limit applies after policy filtering; metadata
         responses are never partial. The query parameter set is closed: profile
-        must occur exactly once and any additional or repeated query parameter,
-        or a profile that is not valid UTF-8, produces 400 INVALID_REQUEST. This
+        and datasource must each occur exactly once. Any additional or repeated
+        query parameter, or either value not being valid UTF-8, produces 400 INVALID_REQUEST. This
         strictness is an application semantic
         represented by the x-quordon-strict-query-parameters extension because
         OpenAPI parameter objects do not define a closed query-string object.
@@ -166,6 +170,7 @@ paths:
         - $ref: "#/components/parameters/SchemaName"
         - $ref: "#/components/parameters/ObjectName"
         - $ref: "#/components/parameters/Profile"
+        - $ref: "#/components/parameters/Datasource"
       responses:
         "200":
           description: Policy-filtered object description.
@@ -386,6 +391,18 @@ components:
       schema:
         type: string
         minLength: 1
+    Datasource:
+      name: datasource
+      in: query
+      required: true
+      description: >-
+        Datasource assigned to the principal and allowed by the selected
+        profile. On metadata operations this parameter must occur exactly once;
+        repeated occurrences and invalid UTF-8 are rejected with 400
+        INVALID_REQUEST.
+      schema:
+        type: string
+        minLength: 1
     SchemaName:
       description: Portable logical schema identifier.
       name: schema
@@ -590,14 +607,31 @@ components:
             $ref: "#/components/schemas/ProfileCapability"
 
     ProfileCapability:
-      description: An assigned profile intersected with MySQL adapter capabilities.
+      description: >-
+        An assigned profile with only the datasources allowed by both the
+        principal and profile policy.
       type: object
       additionalProperties: false
-      required: [name, datasource, adapter, operations, limits]
+      required: [name, limits, datasources]
       properties:
         name:
           type: string
-        datasource:
+        limits:
+          $ref: "#/components/schemas/Limits"
+        datasources:
+          type: array
+          uniqueItems: true
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/DatasourceCapability"
+
+    DatasourceCapability:
+      description: Effective operations for one authorized profile-datasource pair.
+      type: object
+      additionalProperties: false
+      required: [name, adapter, operations]
+      properties:
+        name:
           type: string
         adapter:
           type: string
@@ -608,16 +642,17 @@ components:
           items:
             type: string
             enum: [list_objects, describe_object, describe_object_statistics, explain_select, select, select_keyset, aggregate, list_query_shapes]
-        limits:
-          $ref: "#/components/schemas/Limits"
 
     QueryRequest:
-      description: Request envelope selecting one server-side policy profile.
+      description: Request envelope selecting one authorized profile-datasource pair.
       type: object
       additionalProperties: false
-      required: [profile, query]
+      required: [profile, datasource, query]
       properties:
         profile:
+          type: string
+          minLength: 1
+        datasource:
           type: string
           minLength: 1
         query:
@@ -627,9 +662,12 @@ components:
       description: Request envelope for the field-only executable SELECT subset.
       type: object
       additionalProperties: false
-      required: [profile, query]
+      required: [profile, datasource, query]
       properties:
         profile:
+          type: string
+          minLength: 1
+        datasource:
           type: string
           minLength: 1
         query:

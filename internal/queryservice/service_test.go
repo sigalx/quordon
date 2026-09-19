@@ -6,7 +6,9 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -42,6 +44,8 @@ type successfulAdapter struct {
 	plan []byte
 }
 
+type explainOnlyAdapter struct{ successfulAdapter }
+
 type dataAdapter struct {
 	successfulAdapter
 	objects        []database.SchemaObject
@@ -52,6 +56,11 @@ type dataAdapter struct {
 type cancellationAwareSink struct {
 	events []audit.Event
 }
+
+type discardAuditSink struct{}
+
+func (discardAuditSink) Write(context.Context, audit.Event) error { return nil }
+func (discardAuditSink) Ready() bool                              { return true }
 
 func (s *cancellationAwareSink) Write(ctx context.Context, event audit.Event) error {
 	if err := ctx.Err(); err != nil {
@@ -77,6 +86,8 @@ func (*successfulAdapter) Open(string, config.Datasource) (*sql.DB, error) {
 func (a *successfulAdapter) Explain(context.Context, *sql.DB, policy.AuthorizedQuery) (database.ExplainResult, error) {
 	return database.ExplainResult{Format: "test_json", Plan: append([]byte(nil), a.plan...)}, nil
 }
+
+func (*explainOnlyAdapter) Name() string { return "explain-only" }
 
 func (*dataAdapter) Capabilities() []domain.Operation {
 	return []domain.Operation{
@@ -170,24 +181,205 @@ func (*unsupportedAdapter) Explain(context.Context, *sql.DB, policy.AuthorizedQu
 func TestGlobalCapacityAppliesAcrossProfiles(t *testing.T) {
 	service := &Service{
 		globalCapacity: make(chan struct{}, 1),
-		profileCapacity: map[string]chan struct{}{
-			"first":  make(chan struct{}, 1),
-			"second": make(chan struct{}, 1),
+		bindingCapacity: map[policy.BindingKey]chan struct{}{
+			{Profile: "first", Datasource: "db"}:  make(chan struct{}, 1),
+			{Profile: "second", Datasource: "db"}: make(chan struct{}, 1),
 		},
 	}
-	releaseFirst, ok := service.acquireCapacity("first")
+	first := policy.BindingKey{Profile: "first", Datasource: "db"}
+	second := policy.BindingKey{Profile: "second", Datasource: "db"}
+	releaseFirst, ok := service.acquireCapacity(first)
 	if !ok {
 		t.Fatal("first profile did not acquire capacity")
 	}
-	if _, ok := service.acquireCapacity("second"); ok {
+	if _, ok := service.acquireCapacity(second); ok {
 		t.Fatal("second profile exceeded global capacity")
 	}
 	releaseFirst()
-	releaseSecond, ok := service.acquireCapacity("second")
+	releaseSecond, ok := service.acquireCapacity(second)
 	if !ok {
 		t.Fatal("second profile did not acquire released capacity")
 	}
 	releaseSecond()
+}
+
+func TestBindingCapacityIsIndependentByDatasource(t *testing.T) {
+	testKey := policy.BindingKey{Profile: "reader", Datasource: "test"}
+	rcKey := policy.BindingKey{Profile: "reader", Datasource: "rc"}
+	service := &Service{
+		globalCapacity: make(chan struct{}, 2),
+		bindingCapacity: map[policy.BindingKey]chan struct{}{
+			testKey: make(chan struct{}, 1),
+			rcKey:   make(chan struct{}, 1),
+		},
+	}
+	releaseTest, ok := service.acquireCapacity(testKey)
+	if !ok {
+		t.Fatal("test binding did not acquire capacity")
+	}
+	defer releaseTest()
+	if _, ok := service.acquireCapacity(testKey); ok {
+		t.Fatal("same binding exceeded its per-binding capacity")
+	}
+	releaseRC, ok := service.acquireCapacity(rcKey)
+	if !ok {
+		t.Fatal("second datasource did not acquire independent capacity")
+	}
+	defer releaseRC()
+	if _, ok := service.acquireCapacity(policy.BindingKey{Profile: "other", Datasource: "db"}); ok {
+		t.Fatal("global capacity was exceeded")
+	}
+}
+
+func TestCapabilitiesGroupAndFilterDatasourceBindings(t *testing.T) {
+	limits := domain.Limits{
+		DeadlineMS: 1000, MaxRequestBytes: 1000, MaxProjectionFields: 10,
+		MaxGroupByFields: 10, MaxOrderByFields: 10, MaxPredicates: 10,
+		MaxExpressionDepth: 4, MaxParameters: 10, MaxRows: 10,
+		MaxResultBytes: 1000, MaxOffset: 10, MaxConcurrency: 1,
+	}
+	cfg := config.Config{
+		Version: 1, PolicyHash: "hash", HardLimits: limits,
+		Principals: map[string]config.Principal{
+			"both": {Profiles: []string{"reader"}, Datasources: []string{"z-data", "a-data"}},
+			"one":  {Profiles: []string{"reader"}, Datasources: []string{"z-data"}},
+		},
+		Datasources: map[string]config.Datasource{
+			"z-data": {Adapter: "successful", DSN: "opaque"},
+			"a-data": {Adapter: "explain-only", DSN: "opaque"},
+		},
+		Profiles: map[string]config.Profile{"reader": {
+			Datasources: []string{"z-data", "a-data"},
+			Operations:  []domain.Operation{domain.OperationSelect, domain.OperationExplainSelect},
+			Limits:      limits,
+		}},
+	}
+	manager, problems := database.NewManager(cfg, secrets.Map{}, &dataAdapter{}, &explainOnlyAdapter{})
+	if len(problems) != 0 {
+		t.Fatalf("database problems = %v", problems)
+	}
+	defer manager.Close()
+	service := New(policy.NewSnapshot(cfg), manager, &audit.MemorySink{}, cfg, "test")
+
+	both := service.Capabilities("both")
+	if len(both.Profiles) != 1 || len(both.Profiles[0].Datasources) != 2 {
+		t.Fatalf("capabilities = %+v", both)
+	}
+	datasources := both.Profiles[0].Datasources
+	if datasources[0].Name != "a-data" || datasources[0].Adapter != "explain-only" ||
+		!slices.Equal(datasources[0].Operations, []domain.Operation{domain.OperationExplainSelect}) ||
+		datasources[1].Name != "z-data" || datasources[1].Adapter != "successful" ||
+		!slices.Equal(datasources[1].Operations, []domain.Operation{domain.OperationSelect, domain.OperationExplainSelect}) {
+		t.Fatalf("nested datasource capabilities = %+v", datasources)
+	}
+	one := service.Capabilities("one")
+	if len(one.Profiles) != 1 || len(one.Profiles[0].Datasources) != 1 ||
+		one.Profiles[0].Datasources[0].Name != "z-data" {
+		t.Fatalf("principal datasource filtering = %+v", one)
+	}
+}
+
+func TestCapabilitiesAllocationGrowthIsLinearInDatasourceBindings(t *testing.T) {
+	allocatedBytes := func(bindings int) int64 {
+		t.Helper()
+		limits := domain.Limits{MaxConcurrency: 1}
+		names := make([]string, bindings)
+		datasources := make(map[string]config.Datasource, bindings)
+		for index := range names {
+			name := "db-" + strconv.Itoa(index)
+			names[index] = name
+			datasources[name] = config.Datasource{Adapter: "successful", DSN: "opaque"}
+		}
+		cfg := config.Config{
+			Version: 1, PolicyHash: "hash", HardLimits: limits,
+			Principals: map[string]config.Principal{"client": {
+				Profiles: []string{"reader"}, Datasources: slices.Clone(names),
+			}},
+			Datasources: datasources,
+			Profiles: map[string]config.Profile{"reader": {
+				Datasources: slices.Clone(names), Operations: []domain.Operation{domain.OperationExplainSelect}, Limits: limits,
+			}},
+		}
+		manager, problems := database.NewManager(cfg, secrets.Map{}, &successfulAdapter{})
+		if len(problems) != 0 {
+			t.Fatalf("database problems = %v", problems)
+		}
+		defer manager.Close()
+		service := New(policy.NewSnapshot(cfg), manager, discardAuditSink{}, cfg, "test")
+		var result Capabilities
+		benchmark := testing.Benchmark(func(b *testing.B) {
+			b.ReportAllocs()
+			for range b.N {
+				result = service.Capabilities("client")
+			}
+		})
+		if len(result.Profiles) != 1 || len(result.Profiles[0].Datasources) != bindings {
+			t.Fatalf("capabilities bindings = %+v, want %d", result.Profiles, bindings)
+		}
+		return benchmark.AllocedBytesPerOp()
+	}
+
+	small := allocatedBytes(64)
+	large := allocatedBytes(256)
+	if large > small*6 {
+		t.Fatalf("capabilities allocation grew superlinearly: 64=%d bytes/op 256=%d bytes/op", small, large)
+	}
+}
+
+func TestStartupAuditStateDoesNotMultiplyCredentialsByBindings(t *testing.T) {
+	allocatedBytes := func(credentials int) int64 {
+		t.Helper()
+		const bindings = 128
+		limits := domain.Limits{MaxConcurrency: 1}
+		datasourceNames := make([]string, bindings)
+		datasources := make(map[string]config.Datasource, bindings)
+		for index := range datasourceNames {
+			name := "db-" + strconv.Itoa(index)
+			datasourceNames[index] = name
+			datasources[name] = config.Datasource{Adapter: "successful", DSN: "opaque"}
+		}
+		users := make(map[string]config.BasicUser, credentials)
+		for index := range credentials {
+			users["credential-"+strconv.Itoa(index)] = config.BasicUser{Principal: "client"}
+		}
+		cfg := config.Config{
+			Version: 1, PolicyHash: "hash", HardLimits: limits,
+			Authentication: config.Authentication{Basic: config.BasicAuth{Users: users}},
+			Principals: map[string]config.Principal{"client": {
+				Profiles: []string{"reader"}, Datasources: slices.Clone(datasourceNames),
+			}},
+			Datasources: datasources,
+			Profiles: map[string]config.Profile{"reader": {
+				Datasources: slices.Clone(datasourceNames),
+				Operations:  []domain.Operation{domain.OperationListQueryShapes, domain.OperationSelectKeyset},
+				Limits:      limits,
+			}},
+		}
+		manager, problems := database.NewManager(cfg, secrets.Map{}, &successfulAdapter{})
+		if len(problems) != 0 {
+			t.Fatalf("database problems = %v", problems)
+		}
+		defer manager.Close()
+		snapshot := policy.NewSnapshot(cfg)
+		runtime.GC()
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		service := New(snapshot, manager, discardAuditSink{}, cfg, "test")
+		runtime.ReadMemStats(&after)
+		if len(service.bindingAuditIdentities) != bindings {
+			t.Fatalf("retained audit identities = %d, want %d", len(service.bindingAuditIdentities), bindings)
+		}
+		return int64(after.TotalAlloc - before.TotalAlloc)
+	}
+
+	oneCredential := allocatedBytes(1)
+	manyCredentials := allocatedBytes(512)
+	if manyCredentials > oneCredential*3 {
+		t.Fatalf(
+			"startup audit state multiplied credentials by bindings: one=%d bytes/op many=%d bytes/op",
+			oneCredential, manyCredentials,
+		)
+	}
 }
 
 func TestPolicyDenialsAreDecidedAndAuditedBeforeCapacityAdmission(t *testing.T) {
@@ -199,10 +391,10 @@ func TestPolicyDenialsAreDecidedAndAuditedBeforeCapacityAdmission(t *testing.T) 
 	}
 	cfg := config.Config{
 		Version: 1, PolicyHash: "policy-hash", HardLimits: limits,
-		Principals:  map[string]config.Principal{"client": {Profiles: []string{"reader"}}},
+		Principals:  map[string]config.Principal{"client": {Profiles: []string{"reader"}, Datasources: []string{"db"}}},
 		Datasources: map[string]config.Datasource{"db": {Adapter: "successful", DSN: "opaque"}},
 		Profiles: map[string]config.Profile{"reader": {
-			Datasource: "db",
+			Datasources: []string{"db"},
 			Operations: []domain.Operation{
 				domain.OperationListObjects, domain.OperationDescribeObject,
 				domain.OperationExplainSelect, domain.OperationSelect,
@@ -223,22 +415,21 @@ func TestPolicyDenialsAreDecidedAndAuditedBeforeCapacityAdmission(t *testing.T) 
 	defer manager.Close()
 	sink := &audit.MemorySink{}
 	service := New(policy.NewSnapshot(cfg), manager, sink, cfg, "test")
-	releaseCapacity, ok := service.acquireCapacity("reader")
+	releaseCapacity, ok := service.acquireCapacity(policy.BindingKey{Profile: "reader", Datasource: "db"})
 	if !ok {
 		t.Fatal("failed to occupy execution capacity")
 	}
 	defer releaseCapacity()
 
 	_, err := service.ListObjects(
-		context.Background(), "list-request", "client", "credential", "reader", "closed",
+		context.Background(), "list-request", "client", "credential", "reader", "db", "closed",
 	)
 	assertServiceErrorKind(t, err, ErrorNotFound)
 	_, err = service.DescribeObject(
-		context.Background(), "describe-request", "client", "credential", "reader",
-		queryspec.ResourceRef{Schema: "app", Name: "secret"},
+		context.Background(), "describe-request", "client", "credential", "reader", "db", queryspec.ResourceRef{Schema: "app", Name: "secret"},
 	)
 	assertServiceErrorKind(t, err, ErrorNotFound)
-	deniedQuery := queryspec.Request{Profile: "reader", Query: queryspec.Spec{
+	deniedQuery := queryspec.Request{Profile: "reader", Datasource: "db", Query: queryspec.Spec{
 		Source:     queryspec.ResourceRef{Schema: "app", Name: "orders"},
 		Projection: []queryspec.Selection{{Kind: "field", Field: "secret"}},
 	}}
@@ -268,6 +459,90 @@ func TestPolicyDenialsAreDecidedAndAuditedBeforeCapacityAdmission(t *testing.T) 
 	}
 }
 
+func TestBindingDenialsAreExternallyEquivalentAndDoNotProbeDatasource(t *testing.T) {
+	limits := domain.Limits{
+		DeadlineMS: 1000, MaxRequestBytes: 1000, MaxProjectionFields: 10,
+		MaxGroupByFields: 10, MaxOrderByFields: 10, MaxPredicates: 10,
+		MaxExpressionDepth: 4, MaxParameters: 10, MaxRows: 10,
+		MaxResultBytes: 1000, MaxOffset: 10, MaxConcurrency: 1,
+	}
+	cfg := config.Config{
+		Version: 1, PolicyHash: "hash", HardLimits: limits,
+		Principals: map[string]config.Principal{"client": {
+			Profiles: []string{"reader"}, Datasources: []string{"test"},
+		}},
+		Datasources: map[string]config.Datasource{
+			"test": {Adapter: "successful", DSN: "test"},
+			"rc":   {Adapter: "successful", DSN: "rc"},
+		},
+		Profiles: map[string]config.Profile{"reader": {
+			Datasources: []string{"test", "rc"}, Operations: []domain.Operation{domain.OperationListObjects},
+			Limits: limits,
+		}},
+	}
+	adapter := &dataAdapter{}
+	manager, problems := database.NewManager(cfg, secrets.Map{}, adapter)
+	if len(problems) != 0 {
+		t.Fatal(problems)
+	}
+	defer manager.Close()
+	sink := &audit.MemorySink{}
+	service := New(policy.NewSnapshot(cfg), manager, sink, cfg, "test")
+	for index, target := range []struct {
+		profile, datasource         string
+		profileHash, datasourceHash string
+	}{
+		{
+			profile: "unknown", datasource: "test",
+			profileHash:    "d343880271bf7a39dcadaa9f1bfc6c737ae18f7120e1ea187766045cb06b2c6e",
+			datasourceHash: "5cb4c23d1232d7c9efbda44730342719e2cbeafd7bd21fc71361451046f8be48",
+		},
+		{
+			profile: "reader", datasource: "unknown",
+			profileHash:    "1405cb3e311d1a9c9851e73a0eb99d44b4e3571c6c7e17fbabf4bd996d04e47f",
+			datasourceHash: "719134b8148273fb75e6ee174eb2bb011a1a805944f14e1d13fefc51ffbf431c",
+		},
+		{
+			profile: "reader", datasource: "rc",
+			profileHash:    "1405cb3e311d1a9c9851e73a0eb99d44b4e3571c6c7e17fbabf4bd996d04e47f",
+			datasourceHash: "39798378e1f887e9e9326411f59eed8a48d73fcd911e1df9fc4ccee2647dd13d",
+		},
+	} {
+		_, err := service.ListObjects(
+			context.Background(), "request", "client", "credential",
+			target.profile, target.datasource, "app",
+		)
+		assertServiceErrorKind(t, err, ErrorDenied)
+		if event := sink.Events[index]; event.ReasonCode != policy.ReasonDeniedOperation ||
+			event.PolicyProfile != "" || event.Datasource != "" ||
+			event.RequestedProfileHash != target.profileHash || event.RequestedProfileBytes != len(target.profile) ||
+			event.RequestedDatasourceHash != target.datasourceHash || event.RequestedDatasourceBytes != len(target.datasource) {
+			t.Fatalf("denial %d = %+v", index, event)
+		}
+	}
+	service.audit = discardAuditSink{}
+	denialAllocatedBytes := func(profile string) int64 {
+		benchmark := testing.Benchmark(func(b *testing.B) {
+			b.ReportAllocs()
+			for range b.N {
+				_, _ = service.ListObjects(
+					context.Background(), "request", "client", "credential", profile, "test", "app",
+				)
+			}
+		})
+		return benchmark.AllocedBytesPerOp()
+	}
+	shortAllocations := denialAllocatedBytes("unknown")
+	longAllocations := denialAllocatedBytes(strings.Repeat("x", 64<<10))
+	const allocationMeasurementTolerance = 64
+	if longAllocations > shortAllocations+allocationMeasurementTolerance {
+		t.Fatalf("denial allocation depends on identifier length: short=%d bytes/op long=%d bytes/op", shortAllocations, longAllocations)
+	}
+	if adapter.semanticsCalls != 0 {
+		t.Fatalf("binding denials made %d datasource probes", adapter.semanticsCalls)
+	}
+}
+
 func assertServiceErrorKind(t *testing.T, err error, want ErrorKind) {
 	t.Helper()
 	var serviceError *Error
@@ -285,10 +560,10 @@ func TestSchemaDiscoveryAndSelectArePolicyFilteredAndAudited(t *testing.T) {
 	}
 	cfg := config.Config{
 		Version: 1, PolicyHash: "policy-hash", HardLimits: limits,
-		Principals:  map[string]config.Principal{"client": {Profiles: []string{"reader"}}},
+		Principals:  map[string]config.Principal{"client": {Profiles: []string{"reader"}, Datasources: []string{"db"}}},
 		Datasources: map[string]config.Datasource{"db": {Adapter: "successful", DSN: "opaque"}},
 		Profiles: map[string]config.Profile{"reader": {
-			Datasource: "db",
+			Datasources: []string{"db"},
 			Operations: []domain.Operation{
 				domain.OperationListObjects, domain.OperationDescribeObject, domain.OperationSelect,
 			},
@@ -315,7 +590,7 @@ func TestSchemaDiscoveryAndSelectArePolicyFilteredAndAudited(t *testing.T) {
 	sink := &audit.MemorySink{}
 	service := New(policy.NewSnapshot(cfg), manager, sink, cfg, "test")
 
-	objects, err := service.ListObjects(context.Background(), "request-list", "client", "credential", "reader", "app")
+	objects, err := service.ListObjects(context.Background(), "request-list", "client", "credential", "reader", "db", "app")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,8 +598,7 @@ func TestSchemaDiscoveryAndSelectArePolicyFilteredAndAudited(t *testing.T) {
 		t.Fatalf("objects = %#v", objects.Objects)
 	}
 	description, err := service.DescribeObject(
-		context.Background(), "request-describe", "client", "credential", "reader",
-		queryspec.ResourceRef{Schema: "app", Name: "orders"},
+		context.Background(), "request-describe", "client", "credential", "reader", "db", queryspec.ResourceRef{Schema: "app", Name: "orders"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -338,7 +612,7 @@ func TestSchemaDiscoveryAndSelectArePolicyFilteredAndAudited(t *testing.T) {
 	}
 	result, err := service.Select(
 		context.Background(), "request-select", "query", "client", "credential", 1,
-		queryspec.Request{Profile: "reader", Query: queryspec.Spec{
+		queryspec.Request{Profile: "reader", Datasource: "db", Query: queryspec.Spec{
 			Source:     queryspec.ResourceRef{Schema: "app", Name: "orders"},
 			Projection: []queryspec.Selection{{Kind: "field", Field: "id"}},
 		}},
@@ -364,12 +638,12 @@ func TestSchemaCoordinatesAreValidatedBeforeCapabilityAndDatasourceWork(t *testi
 	}
 	cfg := config.Config{
 		HardLimits: limits,
-		Principals: map[string]config.Principal{"client": {Profiles: []string{"metadata"}}},
+		Principals: map[string]config.Principal{"client": {Profiles: []string{"metadata"}, Datasources: []string{"db"}}},
 		Datasources: map[string]config.Datasource{"db": {
 			Adapter: "unsupported", DSN: "opaque",
 		}},
 		Profiles: map[string]config.Profile{"metadata": {
-			Datasource: "db", Operations: []domain.Operation{
+			Datasources: []string{"db"}, Operations: []domain.Operation{
 				domain.OperationListObjects, domain.OperationDescribeObject,
 			},
 			Limits: limits,
@@ -385,15 +659,14 @@ func TestSchemaCoordinatesAreValidatedBeforeCapabilityAndDatasourceWork(t *testi
 	service := New(policy.NewSnapshot(cfg), manager, sink, cfg, "test")
 
 	_, err := service.ListObjects(
-		context.Background(), "request-list", "client", "credential", "metadata", "invalid-name",
+		context.Background(), "request-list", "client", "credential", "metadata", "db", "invalid-name",
 	)
 	var serviceError *Error
 	if !errors.As(err, &serviceError) || serviceError.Kind != ErrorInvalid {
 		t.Fatalf("invalid schema error = %v, want invalid", err)
 	}
 	_, err = service.DescribeObject(
-		context.Background(), "request-describe", "client", "credential", "metadata",
-		queryspec.ResourceRef{Schema: "app"},
+		context.Background(), "request-describe", "client", "credential", "metadata", "db", queryspec.ResourceRef{Schema: "app"},
 	)
 	if !errors.As(err, &serviceError) || serviceError.Kind != ErrorInvalid {
 		t.Fatalf("empty object error = %v, want invalid", err)
@@ -426,7 +699,7 @@ func TestSchemaPreAuthorizationFailuresDoNotClaimAuthorizedResources(t *testing.
 		service := New(policy.NewSnapshot(cfg), manager, sink, cfg, "test")
 
 		_, err := service.ListObjects(
-			context.Background(), "request", "client", "credential", "metadata", "app",
+			context.Background(), "request", "client", "credential", "metadata", "db", "app",
 		)
 		var serviceError *Error
 		if !errors.As(err, &serviceError) || serviceError.Kind != ErrorNotImplemented {
@@ -451,8 +724,7 @@ func TestSchemaPreAuthorizationFailuresDoNotClaimAuthorizedResources(t *testing.
 		service := New(policy.NewSnapshot(cfg), manager, sink, cfg, "test")
 
 		_, err := service.DescribeObject(
-			context.Background(), "request", "client", "credential", "metadata",
-			queryspec.ResourceRef{Schema: "app", Name: "orders"},
+			context.Background(), "request", "client", "credential", "metadata", "db", queryspec.ResourceRef{Schema: "app", Name: "orders"},
 		)
 		var serviceError *Error
 		if !errors.As(err, &serviceError) || serviceError.Kind != ErrorUnavailable {
@@ -467,10 +739,10 @@ func TestSchemaPreAuthorizationFailuresDoNotClaimAuthorizedResources(t *testing.
 func metadataTestConfig(limits domain.Limits, adapter string) config.Config {
 	return config.Config{
 		Version: 1, PolicyHash: "policy-hash", HardLimits: limits,
-		Principals:  map[string]config.Principal{"client": {Profiles: []string{"metadata"}}},
+		Principals:  map[string]config.Principal{"client": {Profiles: []string{"metadata"}, Datasources: []string{"db"}}},
 		Datasources: map[string]config.Datasource{"db": {Adapter: adapter, DSN: "opaque"}},
 		Profiles: map[string]config.Profile{"metadata": {
-			Datasource: "db", Operations: []domain.Operation{
+			Datasources: []string{"db"}, Operations: []domain.Operation{
 				domain.OperationListObjects, domain.OperationDescribeObject,
 			},
 			Limits: limits,
@@ -571,17 +843,17 @@ func TestSchemaMetadataBudgetAppliesAfterPolicyFiltering(t *testing.T) {
 	}
 	cfg := config.Config{
 		Version: 1, PolicyHash: "policy-hash", HardLimits: limits,
-		Principals:  map[string]config.Principal{"client": {Profiles: []string{"metadata", "tiny"}}},
+		Principals:  map[string]config.Principal{"client": {Profiles: []string{"metadata", "tiny"}, Datasources: []string{"db"}}},
 		Datasources: map[string]config.Datasource{"db": {Adapter: "successful", DSN: "opaque"}},
 		Profiles: map[string]config.Profile{
 			"metadata": {
-				Datasource: "db", Operations: []domain.Operation{
+				Datasources: []string{"db"}, Operations: []domain.Operation{
 					domain.OperationListObjects, domain.OperationDescribeObject,
 				},
 				Limits: limits, Resources: resources,
 			},
 			"tiny": {
-				Datasource: "db", Operations: []domain.Operation{domain.OperationListObjects},
+				Datasources: []string{"db"}, Operations: []domain.Operation{domain.OperationListObjects},
 				Limits: tinyLimits, Resources: resources,
 			},
 		},
@@ -611,7 +883,7 @@ func TestSchemaMetadataBudgetAppliesAfterPolicyFiltering(t *testing.T) {
 	service := New(policy.NewSnapshot(cfg), manager, sink, cfg, "test")
 
 	objects, err := service.ListObjects(
-		context.Background(), "request-list", "client", "credential", "metadata", "app",
+		context.Background(), "request-list", "client", "credential", "metadata", "db", "app",
 	)
 	if err != nil {
 		t.Fatalf("filtered list error = %v", err)
@@ -620,8 +892,7 @@ func TestSchemaMetadataBudgetAppliesAfterPolicyFiltering(t *testing.T) {
 		t.Fatalf("filtered objects = %#v", objects.Objects)
 	}
 	description, err := service.DescribeObject(
-		context.Background(), "request-describe", "client", "credential", "metadata",
-		queryspec.ResourceRef{Schema: "app", Name: "orders"},
+		context.Background(), "request-describe", "client", "credential", "metadata", "db", queryspec.ResourceRef{Schema: "app", Name: "orders"},
 	)
 	if err != nil {
 		t.Fatalf("filtered description error = %v", err)
@@ -634,7 +905,7 @@ func TestSchemaMetadataBudgetAppliesAfterPolicyFiltering(t *testing.T) {
 	}
 
 	_, err = service.ListObjects(
-		context.Background(), "request-tiny", "client", "credential", "tiny", "app",
+		context.Background(), "request-tiny", "client", "credential", "tiny", "db", "app",
 	)
 	var serviceError *Error
 	if !errors.As(err, &serviceError) || serviceError.Kind != ErrorResultTooLarge {
@@ -711,10 +982,10 @@ func TestPostValidationDenialAuditIncludesQueryShapeHash(t *testing.T) {
 	}
 	cfg := config.Config{
 		Version: 1, PolicyHash: "policy-hash", HardLimits: limits,
-		Principals:  map[string]config.Principal{"client": {Profiles: []string{"explain"}}},
+		Principals:  map[string]config.Principal{"client": {Profiles: []string{"explain"}, Datasources: []string{"db"}}},
 		Datasources: map[string]config.Datasource{"db": {Adapter: "successful", DSN: "opaque"}},
 		Profiles: map[string]config.Profile{"explain": {
-			Datasource: "db", Operations: []domain.Operation{domain.OperationExplainSelect}, Limits: limits,
+			Datasources: []string{"db"}, Operations: []domain.Operation{domain.OperationExplainSelect}, Limits: limits,
 			Resources: config.ResourcePolicy{Objects: config.PatternPolicy{Deny: []string{"app.secret"}}},
 		}},
 	}
@@ -728,7 +999,7 @@ func TestPostValidationDenialAuditIncludesQueryShapeHash(t *testing.T) {
 
 	_, err := service.Explain(
 		context.Background(), "request", "query", "client", "credential", 1,
-		queryspec.Request{Profile: "explain", Query: queryspec.Spec{
+		queryspec.Request{Profile: "explain", Datasource: "db", Query: queryspec.Spec{
 			Source:     queryspec.ResourceRef{Schema: "app", Name: "secret"},
 			Projection: []queryspec.Selection{{Kind: "field", Field: "id"}},
 		}},
@@ -754,12 +1025,12 @@ func TestUnsupportedCapabilityDoesNotTouchDatasource(t *testing.T) {
 	}
 	cfg := config.Config{
 		HardLimits: limits,
-		Principals: map[string]config.Principal{"client": {Profiles: []string{"explain"}}},
+		Principals: map[string]config.Principal{"client": {Profiles: []string{"explain"}, Datasources: []string{"db"}}},
 		Datasources: map[string]config.Datasource{"db": {
 			Adapter: "unsupported", DSN: "opaque",
 		}},
 		Profiles: map[string]config.Profile{"explain": {
-			Datasource: "db", Operations: []domain.Operation{domain.OperationExplainSelect}, Limits: limits,
+			Datasources: []string{"db"}, Operations: []domain.Operation{domain.OperationExplainSelect}, Limits: limits,
 		}},
 	}
 	adapter := &unsupportedAdapter{}
@@ -774,7 +1045,7 @@ func TestUnsupportedCapabilityDoesNotTouchDatasource(t *testing.T) {
 	_, err := service.Explain(
 		context.Background(), "request", "query", "client", "credential", 1,
 		queryspec.Request{
-			Profile: "explain",
+			Profile: "explain", Datasource: "db",
 			Query: queryspec.Spec{
 				Source:     queryspec.ResourceRef{Schema: "app", Name: "orders"},
 				Projection: []queryspec.Selection{{Kind: "field", Field: "id"}},
@@ -821,10 +1092,10 @@ func TestExecutionFailureAuditRetainsQueryShapeHash(t *testing.T) {
 	}
 	cfg := config.Config{
 		Version: 1, PolicyHash: "policy-hash", HardLimits: limits,
-		Principals:  map[string]config.Principal{"client": {Profiles: []string{"explain"}}},
+		Principals:  map[string]config.Principal{"client": {Profiles: []string{"explain"}, Datasources: []string{"db"}}},
 		Datasources: map[string]config.Datasource{"db": {Adapter: "failing", DSN: "opaque"}},
 		Profiles: map[string]config.Profile{"explain": {
-			Datasource: "db", Operations: []domain.Operation{domain.OperationExplainSelect}, Limits: limits,
+			Datasources: []string{"db"}, Operations: []domain.Operation{domain.OperationExplainSelect}, Limits: limits,
 		}},
 	}
 	manager, problems := database.NewManager(cfg, secrets.Map{}, &failingAdapter{})
@@ -837,7 +1108,7 @@ func TestExecutionFailureAuditRetainsQueryShapeHash(t *testing.T) {
 
 	_, err := service.Explain(
 		context.Background(), "request", "query", "client", "credential", 1,
-		queryspec.Request{Profile: "explain", Query: queryspec.Spec{
+		queryspec.Request{Profile: "explain", Datasource: "db", Query: queryspec.Spec{
 			Source:     queryspec.ResourceRef{Schema: "app", Name: "orders"},
 			Projection: []queryspec.Selection{{Kind: "field", Field: "id"}},
 		}},
@@ -869,12 +1140,12 @@ func TestIdentifierSemanticsFailureIsAuditedAndFailsClosed(t *testing.T) {
 	}
 	cfg := config.Config{
 		Version: 1, PolicyHash: "policy-hash", HardLimits: limits,
-		Principals: map[string]config.Principal{"client": {Profiles: []string{"explain"}}},
+		Principals: map[string]config.Principal{"client": {Profiles: []string{"explain"}, Datasources: []string{"db"}}},
 		Datasources: map[string]config.Datasource{"db": {
 			Adapter: "semantics-failing", DSN: "opaque",
 		}},
 		Profiles: map[string]config.Profile{"explain": {
-			Datasource: "db", Operations: []domain.Operation{domain.OperationExplainSelect}, Limits: limits,
+			Datasources: []string{"db"}, Operations: []domain.Operation{domain.OperationExplainSelect}, Limits: limits,
 		}},
 	}
 	manager, problems := database.NewManager(cfg, secrets.Map{}, &semanticsFailingAdapter{})
@@ -884,7 +1155,7 @@ func TestIdentifierSemanticsFailureIsAuditedAndFailsClosed(t *testing.T) {
 	defer manager.Close()
 	sink := &audit.MemorySink{}
 	service := New(policy.NewSnapshot(cfg), manager, sink, cfg, "test")
-	request := queryspec.Request{Profile: "explain", Query: queryspec.Spec{
+	request := queryspec.Request{Profile: "explain", Datasource: "db", Query: queryspec.Spec{
 		Source:     queryspec.ResourceRef{Schema: "app", Name: "orders"},
 		Projection: []queryspec.Selection{{Kind: "field", Field: "id"}},
 	}}
@@ -927,10 +1198,10 @@ func TestAllowedAuditIncludesClientResourceFieldsAndResultSize(t *testing.T) {
 	}
 	cfg := config.Config{
 		Version: 1, PolicyHash: "policy-hash", HardLimits: limits,
-		Principals:  map[string]config.Principal{"client": {Profiles: []string{"explain"}}},
+		Principals:  map[string]config.Principal{"client": {Profiles: []string{"explain"}, Datasources: []string{"db"}}},
 		Datasources: map[string]config.Datasource{"db": {Adapter: "successful", DSN: "opaque"}},
 		Profiles: map[string]config.Profile{"explain": {
-			Datasource: "db", Operations: []domain.Operation{domain.OperationExplainSelect}, Limits: limits,
+			Datasources: []string{"db"}, Operations: []domain.Operation{domain.OperationExplainSelect}, Limits: limits,
 			Query: config.QueryPolicy{
 				AllowFiltering: true, AllowSorting: true, AllowedFilterOperators: []string{"eq"},
 			},
@@ -947,7 +1218,7 @@ func TestAllowedAuditIncludesClientResourceFieldsAndResultSize(t *testing.T) {
 
 	_, err := service.Explain(
 		context.Background(), "request", "query", "client", "basic-user", 1,
-		queryspec.Request{Profile: "explain", Query: queryspec.Spec{
+		queryspec.Request{Profile: "explain", Datasource: "db", Query: queryspec.Spec{
 			Source: queryspec.ResourceRef{Schema: "app", Name: "orders"},
 			Projection: []queryspec.Selection{
 				{Kind: "field", Field: "status"},

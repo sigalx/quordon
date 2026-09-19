@@ -16,11 +16,13 @@ import (
 // the process-wide audit bound. It runs before discovery probes or listener
 // startup and constructs only bounded metadata; no datasource is consulted.
 func (s *Service) validateKeysetAuditBounds(maximum int) error {
-	for _, identity := range s.queryShapeAuditIdentities {
+	identity := s.queryShapeAuditIdentity
+	if identity.principal != "" && identity.clientIdentifier != "" {
 		event := s.keysetOperationDenialEvent(
 			strings.Repeat("r", 64), strings.Repeat("q", 64),
 			identity.principal, identity.clientIdentifier,
 			strings.Repeat("f", 64), s.policy.HardLimits().MaxRequestBytes,
+			strings.Repeat("d", 64), s.policy.HardLimits().MaxRequestBytes,
 		)
 		within, err := queryShapeAuditEventWithinBound(event, maximum)
 		if err != nil {
@@ -32,38 +34,39 @@ func (s *Service) validateKeysetAuditBounds(maximum int) error {
 	}
 
 	maximumDuration := int64(math.MaxInt64)
-	for profileName, identities := range s.keysetAuditIdentities {
-		profile, ok := s.policy.Profile(profileName)
+	for key, identity := range s.bindingAuditIdentities {
+		profile, ok := s.policy.Profile(key.Profile)
 		if !ok {
-			return fmt.Errorf("keyset audit profile %q disappeared from the policy snapshot", profileName)
+			return fmt.Errorf("keyset audit profile %q disappeared from the policy snapshot", key.Profile)
 		}
-		adapterName := s.databases.AdapterName(profile.Datasource)
+		if !slices.Contains(profile.Operations, domain.OperationSelectKeyset) {
+			continue
+		}
+		adapterName := s.databases.AdapterName(key.Datasource)
 		for _, shape := range profile.Query.KeysetSelectShapes {
 			resources, fields := configuredKeysetAuditScope(shape)
 			metadata := keysetSuccessAuditMetadata(shape.Name, true, profile.Limits.MaxRows)
-			for _, identity := range identities {
-				// This deliberately combines every optional field used by the
-				// reachable decision/completion variants. It is a conservative
-				// upper bound, while retaining the exact configured strings and
-				// collection cardinalities that dominate the event size.
-				event := audit.Event{
-					Type: "query_completion", RequestID: strings.Repeat("r", 64), QueryID: strings.Repeat("q", 64),
-					Principal: identity.principal, ClientIdentifier: identity.clientIdentifier,
-					PolicyProfile: profileName, PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(),
-					Datasource: profile.Datasource, Adapter: adapterName,
-					Operation: string(domain.OperationSelectKeyset), Decision: "allow",
-					ReasonCode: "DENIED_QUERY_FEATURE", Outcome: "not_implemented",
-					ErrorKind: "service_unavailable", DurationMS: &maximumDuration,
-					ResultBytes: profile.Limits.MaxResultBytes, QueryShapeHash: strings.Repeat("f", 64),
-					Resources: resources, Fields: fields, Metadata: metadata,
-				}
-				within, err := queryShapeAuditEventWithinBound(event, maximum)
-				if err != nil {
-					return fmt.Errorf("size keyset audit bound for profile %q: %w", profileName, err)
-				}
-				if !within {
-					return fmt.Errorf("keyset audit event for profile %q exceeds %d bytes", profileName, maximum)
-				}
+			// This deliberately combines every optional field used by the
+			// reachable decision/completion variants. It is a conservative
+			// upper bound, while retaining the exact configured strings and
+			// collection cardinalities that dominate the event size.
+			event := audit.Event{
+				Type: "query_completion", RequestID: strings.Repeat("r", 64), QueryID: strings.Repeat("q", 64),
+				Principal: identity.principal, ClientIdentifier: identity.clientIdentifier,
+				PolicyProfile: key.Profile, PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(),
+				Datasource: key.Datasource, Adapter: adapterName,
+				Operation: string(domain.OperationSelectKeyset), Decision: "allow",
+				ReasonCode: "DENIED_QUERY_FEATURE", Outcome: "not_implemented",
+				ErrorKind: "service_unavailable", DurationMS: &maximumDuration,
+				ResultBytes: profile.Limits.MaxResultBytes, QueryShapeHash: strings.Repeat("f", 64),
+				Resources: resources, Fields: fields, Metadata: metadata,
+			}
+			within, err := queryShapeAuditEventWithinBound(event, maximum)
+			if err != nil {
+				return fmt.Errorf("size keyset audit bound for profile %q: %w", key.Profile, err)
+			}
+			if !within {
+				return fmt.Errorf("keyset audit event for profile %q exceeds %d bytes", key.Profile, maximum)
 			}
 		}
 	}

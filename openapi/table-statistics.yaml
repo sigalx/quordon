@@ -2,7 +2,7 @@
 openapi: 3.1.0
 info:
   title: Quordon Table Statistics API Module
-  version: 1.5.0
+  version: 1.6.0
   description: >-
     Executable contract module for policy-authorized table and partition
     statistics. The root service contract in openapi.yaml references this path;
@@ -350,6 +350,9 @@ paths:
         cases:
           - profile-does-not-exist
           - profile-is-not-assigned-to-principal
+          - datasource-does-not-exist
+          - datasource-is-not-assigned-to-principal
+          - datasource-is-not-allowed-by-profile
           - profile-does-not-configure-describe-object-statistics
         status: 403
         code: DENIED_OPERATION
@@ -446,6 +449,8 @@ paths:
           decision: deny
           reason-code: DENIED_OPERATION
           records-requested-profile-raw: false
+          records-requested-datasource-raw: false
+          requested-profile-and-datasource: separate-domain-separated-sha256-and-utf8-byte-length
           records-requested-schema-or-object: false
         resource-denial:
           event: operation_decision
@@ -516,6 +521,7 @@ paths:
         - $ref: "#/components/parameters/SchemaName"
         - $ref: "#/components/parameters/ObjectName"
         - $ref: "#/components/parameters/Profile"
+        - $ref: "#/components/parameters/Datasource"
       responses:
         "200":
           description: Complete authorized table and partition statistics observation.
@@ -670,6 +676,18 @@ components:
         Assigned server-side profile. It must occur exactly once. Additional or
         repeated query parameters and invalid UTF-8 are rejected with 400
         INVALID_REQUEST by the strict query-string semantic.
+      schema:
+        type: string
+        minLength: 1
+
+    Datasource:
+      name: datasource
+      in: query
+      required: true
+      description: >-
+        Datasource assigned to the principal and allowed by the selected
+        profile. It must occur exactly once; repeated values and invalid UTF-8
+        are rejected with 400 INVALID_REQUEST.
       schema:
         type: string
         minLength: 1

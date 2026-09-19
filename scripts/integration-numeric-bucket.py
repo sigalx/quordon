@@ -29,7 +29,7 @@ def observed_statement_count(prefix, service):
                      "AND argument LIKE '" + prefix + "%'", service))
 
 
-def make_request(profile, template, value=None):
+def make_request(profile, datasource, template, value=None):
     query = copy.deepcopy(template["query"])
     for output in query["projection"]:
         output.pop("boundaries", None)
@@ -37,13 +37,14 @@ def make_request(profile, template, value=None):
     if "filter" in query:
         types = query["filter"].pop("value_types")
         query["filter"]["values"] = [{"type": types[0], "value": value}]
-    return {"profile": profile, "query": query}
+    return {"profile": profile, "datasource": datasource, "query": query}
 
 
 def main():
-    for profile, datasource, service in [("numeric-test", "integration-mysql", "mysql"), ("numeric-rc", "integration-rc-mysql", "mysql-rc")]:
-        print("Checking numeric buckets on", profile, flush=True)
-        discovery = request("/query-shapes?profile=" + profile)
+    profile = "numeric"
+    for datasource, service in [("integration-mysql", "mysql"), ("integration-rc-mysql", "mysql-rc")]:
+        print("Checking numeric buckets on", datasource, flush=True)
+        discovery = request("/query-shapes?profile=" + profile + "&datasource=" + datasource)
         assert discovery["datasource"] == datasource
         templates = {shape["name"]: shape for shape in discovery["shapes"]}
         for field in ["signed_value", "unsigned_value", "decimal_value"]:
@@ -58,7 +59,7 @@ def main():
             expected = [[None if b is None else str(b), str(counts[b])]
                         for b in sorted(counts, key=lambda b: -1 if b is None else b)]
             for direction in ["asc", "desc"]:
-                body = make_request(profile, templates[field + "_" + direction])
+                body = make_request(profile, datasource, templates[field + "_" + direction])
                 response = request("/queries/aggregate", body)
                 assert response["datasource"] == datasource
                 assert response["rows"] == (expected if direction == "asc" else list(reversed(expected))), (field, direction, response)
@@ -66,34 +67,34 @@ def main():
                 body["query"]["limit"] = 2
                 prefix = request("/queries/aggregate", body)
                 assert prefix["rows"] == response["rows"][:2] and prefix["truncated"]
-            empty = request("/queries/aggregate", make_request(profile, templates[field + "_empty"], 999))
+            empty = request("/queries/aggregate", make_request(profile, datasource, templates[field + "_empty"], 999))
             assert empty["rows"] == [] and empty["row_count"] == 0 and not empty["truncated"]
-            unordered = request("/queries/aggregate", make_request(profile, templates[field + "_unordered"]))
+            unordered = request("/queries/aggregate", make_request(profile, datasource, templates[field + "_unordered"]))
             assert {tuple(row) for row in unordered["rows"]} == {tuple(row) for row in expected}
-        response = request("/queries/aggregate", make_request(profile, templates["composition"], 1))
+        response = request("/queries/aggregate", make_request(profile, datasource, templates["composition"], 1))
         assert len(response["columns"]) == 11 and response["row_count"] > 0
         assert all(row[3] == "2026-09-18T00:00:00Z" for row in response["rows"])
         for name in ["float_value_unsupported", "double_value_unsupported", "text_value_unsupported", "precision_unsupported", "scale_unsupported"]:
             explain_before = observed_statement_count("EXPLAIN FORMAT=JSON SELECT /*+ MAX_EXECUTION_TIME", service)
             select_before = observed_statement_count("SELECT /*+ MAX_EXECUTION_TIME", service)
-            failure = request("/queries/aggregate", make_request(profile, templates[name]), status=422)
+            failure = request("/queries/aggregate", make_request(profile, datasource, templates[name]), status=422)
             assert failure["code"] == "UNSUPPORTED_QUERY"
             assert observed_statement_count("EXPLAIN FORMAT=JSON SELECT /*+ MAX_EXECUTION_TIME", service) == explain_before
             assert observed_statement_count("SELECT /*+ MAX_EXECUTION_TIME", service) == select_before
         for name in ["work_denied", "estimate_denied", "index_denied"]:
             select_before = observed_statement_count("SELECT /*+ MAX_EXECUTION_TIME", service)
-            request("/queries/aggregate", make_request(profile, templates[name]), status=422)
+            request("/queries/aggregate", make_request(profile, datasource, templates[name]), status=422)
             assert observed_statement_count("SELECT /*+ MAX_EXECUTION_TIME", service) == select_before
-        body = make_request(profile, templates["signed_value_asc"])
+        body = make_request(profile, datasource, templates["signed_value_asc"])
         body["query"]["projection"][0]["field"] = "hidden_value"
         select_before = observed_statement_count("SELECT /*+ MAX_EXECUTION_TIME", service)
         request("/queries/aggregate", body, status=403)
         assert observed_statement_count("SELECT /*+ MAX_EXECUTION_TIME", service) == select_before
-        body = make_request(profile, templates["signed_value_asc"])
+        body = make_request(profile, datasource, templates["signed_value_asc"])
         body["query"]["projection"][0]["boundaries"] = ["0"]
         request("/queries/aggregate", body, status=400)
-    templates = {s["name"]: s for s in request("/query-shapes?profile=numeric-test")["shapes"]}
-    response = request("/queries/aggregate", make_request("numeric-byte", templates["byte_prefix"]))
+    templates = {s["name"]: s for s in request("/query-shapes?profile=numeric&datasource=integration-mysql")["shapes"]}
+    response = request("/queries/aggregate", make_request("numeric-byte", "integration-mysql", templates["byte_prefix"]))
     assert response["truncated"] and 0 < response["row_count"] < 11, response
     print("Numeric buckets: exact boundaries, NULL, composition, truncation, denials and datasource routing passed.")
 

@@ -36,7 +36,7 @@ func TestDenylistUsesRequestedViewFieldsWithoutDependencyPropagation(t *testing.
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = snapshot.AuthorizeSelect("readonly-client", "data-reader", validated, domain.IdentifierSemantics{CaseInsensitiveFields: true})
+		_, err = snapshot.AuthorizeSelect(bindingForTest(t, snapshot, "readonly-client", "data-reader", "primary-mysql", domain.OperationSelect), validated, domain.IdentifierSemantics{CaseInsensitiveFields: true})
 		if fixture.allowed && err != nil {
 			t.Fatalf("alias denied: %v", err)
 		}

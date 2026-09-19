@@ -52,11 +52,12 @@ func (r SelectRequestVNext) Keyset() (KeysetRequest, bool) {
 }
 
 type KeysetRequest struct {
-	Kind    string     `json:"kind"`
-	Profile string     `json:"profile"`
-	Shape   string     `json:"shape"`
-	Query   KeysetSpec `json:"query"`
-	Page    KeysetPage `json:"page"`
+	Kind       string     `json:"kind"`
+	Profile    string     `json:"profile"`
+	Datasource string     `json:"datasource"`
+	Shape      string     `json:"shape"`
+	Query      KeysetSpec `json:"query"`
+	Page       KeysetPage `json:"page"`
 }
 
 type KeysetSpec struct {
@@ -78,10 +79,11 @@ type KeysetCursorValue struct {
 }
 
 type NormalizedKeysetRequest struct {
-	Profile string
-	Shape   string
-	Query   KeysetSpec
-	Page    KeysetPage
+	Profile    string
+	Datasource string
+	Shape      string
+	Query      KeysetSpec
+	Page       KeysetPage
 }
 
 type ValidatedKeyset struct {
@@ -105,6 +107,9 @@ func ValidateKeyset(
 	}
 	if request.Profile == "" || !utf8.ValidString(request.Profile) {
 		return ValidatedKeyset{}, validationError("profile", "must be a nonempty UTF-8 string")
+	}
+	if request.Datasource == "" || !utf8.ValidString(request.Datasource) {
+		return ValidatedKeyset{}, validationError("datasource", "must be a nonempty UTF-8 string")
 	}
 	if err := validateIdentifier("shape", request.Shape); err != nil {
 		return ValidatedKeyset{}, err
@@ -220,8 +225,8 @@ func ValidateKeyset(
 	stats.Parameters += cursorParameters + 1 // One server-owned LIMIT binding.
 
 	normalized := NormalizedKeysetRequest{
-		Profile: request.Profile,
-		Shape:   request.Shape,
+		Profile: request.Profile, Datasource: request.Datasource,
+		Shape: request.Shape,
 		Query: KeysetSpec{
 			Source: request.Query.Source, Projection: slices.Clone(request.Query.Projection),
 			Filter: cloneFilter(request.Query.Filter), OrderBy: slices.Clone(request.Query.OrderBy),

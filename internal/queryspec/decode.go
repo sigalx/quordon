@@ -44,8 +44,9 @@ func (v *wireInt) UnmarshalJSON(data []byte) error {
 }
 
 type requestWire struct {
-	Profile wireString `json:"profile"`
-	Query   *specWire  `json:"query"`
+	Profile    wireString `json:"profile"`
+	Datasource wireString `json:"datasource"`
+	Query      *specWire  `json:"query"`
 }
 
 type specWire struct {
@@ -121,6 +122,12 @@ func decodeStrictRequest(data []byte, maxFilterDepth int, selectOnly bool) (Requ
 	if wire.Profile.Value == "" {
 		return Request{}, errors.New("profile must not be empty")
 	}
+	if !wire.Datasource.Set {
+		return Request{}, errors.New("datasource is required")
+	}
+	if wire.Datasource.Value == "" {
+		return Request{}, errors.New("datasource must not be empty")
+	}
 	if wire.Query == nil {
 		return Request{}, errors.New("query is required")
 	}
@@ -133,7 +140,7 @@ func decodeStrictRequest(data []byte, maxFilterDepth int, selectOnly bool) (Requ
 			return Request{}, err
 		}
 	}
-	return Request{Profile: wire.Profile.Value, Query: query}, nil
+	return Request{Profile: wire.Profile.Value, Datasource: wire.Datasource.Value, Query: query}, nil
 }
 
 // validateSimpleSelectTransport applies every SimpleSelectQuerySpec constraint
@@ -351,14 +358,14 @@ func scanRequestShape(data []byte, maxFilterDepth int, selectOnly bool) error {
 	if !ok || delimiter != '{' {
 		return nil // The strict object decoder returns the request-contract error.
 	}
-	seen := make(map[string]struct{}, 2)
+	seen := make(map[string]struct{}, 3)
 	for decoder.More() {
 		key, err := nextUniqueObjectKey(decoder, seen)
 		if err != nil {
 			return err
 		}
 		switch key {
-		case "profile":
+		case "profile", "datasource":
 			err = skipJSONValue(decoder)
 		case "query":
 			err = scanQueryShape(decoder, maxFilterDepth, selectOnly)

@@ -12,9 +12,9 @@ func TestAuthorizeObjectStatisticsMintsCanonicalOperationBoundToken(t *testing.T
 	limits := domain.Limits{MaxResultBytes: 1024}
 	snapshot := NewSnapshot(config.Config{
 		Version: 7, PolicyHash: "redacted-policy-hash", HardLimits: limits,
-		Principals: map[string]config.Principal{"observer": {Profiles: []string{"production"}}},
+		Principals: map[string]config.Principal{"observer": {Profiles: []string{"production"}, Datasources: []string{"primary"}}},
 		Profiles: map[string]config.Profile{"production": {
-			Datasource: "primary", Operations: []domain.Operation{domain.OperationDescribeObjectStatistics},
+			Datasources: []string{"primary"}, Operations: []domain.Operation{domain.OperationDescribeObjectStatistics},
 			Limits: limits,
 			Resources: config.ResourcePolicy{
 				Schemas: config.PatternPolicy{Allow: []string{"application"}},
@@ -26,7 +26,7 @@ func TestAuthorizeObjectStatisticsMintsCanonicalOperationBoundToken(t *testing.T
 		CaseInsensitiveSchemas: true, CaseInsensitiveObjects: true, CaseInsensitiveFields: true,
 	}
 	authorized, err := snapshot.AuthorizeObjectStatistics(
-		"observer", "basic-user", "production", domain.AdapterMySQL8,
+		bindingForTest(t, snapshot, "observer", "production", "primary", domain.OperationDescribeObjectStatistics), "basic-user", domain.AdapterMySQL8,
 		queryspec.ResourceRef{Schema: "APPLICATION", Name: "ORDERS"}, semantics,
 	)
 	if err != nil {
@@ -45,19 +45,17 @@ func TestAuthorizeObjectStatisticsMintsCanonicalOperationBoundToken(t *testing.T
 
 func TestAuthorizeObjectStatisticsRequiresIndependentOperationAndResource(t *testing.T) {
 	base := config.Config{
-		Principals: map[string]config.Principal{"observer": {Profiles: []string{"production"}}},
+		Principals: map[string]config.Principal{"observer": {Profiles: []string{"production"}, Datasources: []string{"primary"}}},
 		Profiles: map[string]config.Profile{"production": {
-			Datasource: "primary", Operations: []domain.Operation{domain.OperationDescribeObject},
+			Datasources: []string{"primary"}, Operations: []domain.Operation{domain.OperationDescribeObject},
 			Resources: config.ResourcePolicy{
 				Schemas: config.PatternPolicy{Allow: []string{"application"}},
 				Objects: config.PatternPolicy{Allow: []string{"application.orders"}},
 			},
 		}},
 	}
-	_, err := NewSnapshot(base).AuthorizeObjectStatistics(
-		"observer", "basic-user", "production", domain.AdapterMySQL8,
-		queryspec.ResourceRef{Schema: "application", Name: "orders"}, domain.IdentifierSemantics{},
-	)
+	snapshot := NewSnapshot(base)
+	_, err := snapshot.AuthorizeBinding("observer", "production", "primary", domain.OperationDescribeObjectStatistics)
 	reason := ""
 	if !IsDenial(err, &reason) || reason != ReasonDeniedOperation {
 		t.Fatalf("describe_object-only authorization error = %v, reason=%q", err, reason)
@@ -65,8 +63,9 @@ func TestAuthorizeObjectStatisticsRequiresIndependentOperationAndResource(t *tes
 	profile := base.Profiles["production"]
 	profile.Operations = []domain.Operation{domain.OperationDescribeObjectStatistics}
 	base.Profiles["production"] = profile
-	_, err = NewSnapshot(base).AuthorizeObjectStatistics(
-		"observer", "basic-user", "production", domain.AdapterMySQL8,
+	snapshot = NewSnapshot(base)
+	_, err = snapshot.AuthorizeObjectStatistics(
+		bindingForTest(t, snapshot, "observer", "production", "primary", domain.OperationDescribeObjectStatistics), "basic-user", domain.AdapterMySQL8,
 		queryspec.ResourceRef{Schema: "application", Name: "secret"}, domain.IdentifierSemantics{},
 	)
 	if !IsDenial(err, &reason) || reason != ReasonDeniedResource {
@@ -85,7 +84,7 @@ func TestAuthorizeObjectStatisticsRejectsIncompleteTokenIdentity(t *testing.T) {
 		{principal: "principal", credential: "credential", profile: "profile"},
 	} {
 		_, err := snapshot.AuthorizeObjectStatistics(
-			fixture.principal, fixture.credential, fixture.profile, fixture.adapter,
+			AuthorizedBinding{}, fixture.credential, fixture.adapter,
 			queryspec.ResourceRef{Schema: "app", Name: "orders"}, domain.IdentifierSemantics{},
 		)
 		reason := ""

@@ -70,7 +70,7 @@ func TestAggregateSuccessIsAuthorizedBoundedAndAudited(t *testing.T) {
 
 	result, err := service.Aggregate(
 		context.Background(), "request", "query", "client", "credential", 1,
-		queryspec.AggregateRequest{Profile: "analytics", Query: aggregateScalarSpec()},
+		queryspec.AggregateRequest{Profile: "analytics", Datasource: "db", Query: aggregateScalarSpec()},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -105,7 +105,7 @@ func TestAggregateShapeDenialHappensBeforeAdapterAction(t *testing.T) {
 	spec.Projection[0].Alias = "Different"
 	_, err := service.Aggregate(
 		context.Background(), "request", "query", "client", "credential", 1,
-		queryspec.AggregateRequest{Profile: "analytics", Query: spec},
+		queryspec.AggregateRequest{Profile: "analytics", Datasource: "db", Query: spec},
 	)
 	assertServiceErrorKind(t, err, ErrorDenied)
 	validated, validateErr := queryspec.ValidateAggregate(spec, 10, 10, 10, 10, 4, 20, 100)
@@ -142,7 +142,7 @@ func TestAggregateOutputCollisionFailsBeforeIdentifierSemantics(t *testing.T) {
 	})
 	_, err := service.Aggregate(
 		context.Background(), "request", "query", "client", "credential", 1,
-		queryspec.AggregateRequest{Profile: "analytics", Query: spec},
+		queryspec.AggregateRequest{Profile: "analytics", Datasource: "db", Query: spec},
 	)
 	assertServiceErrorKind(t, err, ErrorInvalid)
 	if adapter.semanticsCalls != 0 || adapter.calls != 0 {
@@ -176,7 +176,7 @@ func TestTimeBucketFeatureMismatchReturnsNotImplementedWithoutDatasourceCall(t *
 	limit := 5
 	_, err := service.Aggregate(
 		context.Background(), "request", "query", "client", "credential", 1,
-		queryspec.AggregateRequest{Profile: "analytics", Query: queryspec.AggregateSpec{
+		queryspec.AggregateRequest{Profile: "analytics", Datasource: "db", Query: queryspec.AggregateSpec{
 			Mode: queryspec.AggregateModeGrouped, Source: queryspec.ResourceRef{Schema: "app", Name: "orders"},
 			Projection: []queryspec.AggregateOutput{
 				{Kind: "time_bucket", Field: "created_at", Unit: "day", Timezone: "UTC", Alias: "created_day"},
@@ -203,7 +203,7 @@ func TestAggregateCapacityFailureWritesCompletionAudit(t *testing.T) {
 	sink := &audit.MemorySink{}
 	service := New(policy.NewSnapshot(cfg), manager, sink, cfg, "test")
 
-	release, ok := service.acquireCapacity("analytics")
+	release, ok := service.acquireCapacity(policy.BindingKey{Profile: "analytics", Datasource: "db"})
 	if !ok {
 		t.Fatal("failed to occupy aggregate execution capacity")
 	}
@@ -211,7 +211,7 @@ func TestAggregateCapacityFailureWritesCompletionAudit(t *testing.T) {
 
 	_, err := service.Aggregate(
 		context.Background(), "request", "query", "client", "credential", 1,
-		queryspec.AggregateRequest{Profile: "analytics", Query: aggregateScalarSpec()},
+		queryspec.AggregateRequest{Profile: "analytics", Datasource: "db", Query: aggregateScalarSpec()},
 	)
 	assertServiceErrorKind(t, err, ErrorCapacity)
 	if adapter.calls != 0 {
@@ -238,10 +238,10 @@ func aggregateServiceConfig(adapter string) config.Config {
 	}
 	return config.Config{
 		Version: 1, PolicyHash: "hash", HardLimits: limits,
-		Principals:  map[string]config.Principal{"client": {Profiles: []string{"analytics"}}},
+		Principals:  map[string]config.Principal{"client": {Profiles: []string{"analytics"}, Datasources: []string{"db"}}},
 		Datasources: map[string]config.Datasource{"db": {Adapter: adapter, DSN: "opaque"}},
 		Profiles: map[string]config.Profile{"analytics": {
-			Datasource: "db", Operations: []domain.Operation{domain.OperationAggregate}, Limits: limits,
+			Datasources: []string{"db"}, Operations: []domain.Operation{domain.OperationAggregate}, Limits: limits,
 			Resources: config.ResourcePolicy{
 				Schemas: config.PatternPolicy{Allow: []string{"app"}},
 				Objects: config.PatternPolicy{Allow: []string{"app.orders"}},

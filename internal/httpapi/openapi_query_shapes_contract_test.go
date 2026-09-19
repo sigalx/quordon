@@ -62,7 +62,7 @@ func TestQueryShapesRuntimeResponseMatchesRootOpenAPI31(t *testing.T) {
 	server, closeDatabases := successfulContractServer(t)
 	defer closeDatabases()
 
-	request := httptest.NewRequest(http.MethodGet, "/query-shapes?profile=reader", nil)
+	request := httptest.NewRequest(http.MethodGet, "/query-shapes?profile=reader&datasource=mysql", nil)
 	request.SetBasicAuth("client", "secret")
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
@@ -82,7 +82,7 @@ func TestQueryShapesRuntimeResponseMatchesRootOpenAPI31(t *testing.T) {
 	}
 
 	contractRequest := httptest.NewRequest(
-		http.MethodGet, "http://quordon.test/query-shapes?profile=reader", nil,
+		http.MethodGet, "http://quordon.test/query-shapes?profile=reader&datasource=mysql", nil,
 	)
 	contractRequest.SetBasicAuth("client", "secret")
 	valid, validationErrors := contract.ValidateHttpResponse(contractRequest, response.Result())
@@ -97,7 +97,7 @@ func TestQueryShapesPublishesTimeBucketsInJSON(t *testing.T) {
 	server, sink, closeDatabases := successfulTimeBucketContractServer(t)
 	defer closeDatabases()
 	for _, accept := range []string{"", "*/*", "application/json"} {
-		request := httptest.NewRequest(http.MethodGet, "http://quordon.test/query-shapes?profile=reader", nil)
+		request := httptest.NewRequest(http.MethodGet, "http://quordon.test/query-shapes?profile=reader&datasource=mysql", nil)
 		request.SetBasicAuth("client", "secret")
 		if accept != "" {
 			request.Header.Set("Accept", accept)
@@ -126,12 +126,16 @@ func TestQueryShapesRuntimeEnforcesStrictQueryAndNoStoreOnErrors(t *testing.T) {
 		credentials bool
 		status      int
 	}{
-		{name: "missing credentials", path: "/query-shapes?profile=reader", status: http.StatusUnauthorized},
+		{name: "missing credentials", path: "/query-shapes?profile=reader&datasource=mysql", status: http.StatusUnauthorized},
 		{name: "missing profile", path: "/query-shapes", credentials: true, status: http.StatusBadRequest},
-		{name: "repeated profile", path: "/query-shapes?profile=reader&profile=reader", credentials: true, status: http.StatusBadRequest},
-		{name: "additional parameter", path: "/query-shapes?profile=reader&other=x", credentials: true, status: http.StatusBadRequest},
-		{name: "invalid utf8", path: "/query-shapes?profile=%FF", credentials: true, status: http.StatusBadRequest},
-		{name: "unassigned", path: "/query-shapes?profile=unknown", credentials: true, status: http.StatusForbidden},
+		{name: "missing datasource", path: "/query-shapes?profile=reader", credentials: true, status: http.StatusBadRequest},
+		{name: "repeated profile", path: "/query-shapes?profile=reader&datasource=mysql&profile=reader", credentials: true, status: http.StatusBadRequest},
+		{name: "repeated datasource", path: "/query-shapes?profile=reader&datasource=mysql&datasource=mysql", credentials: true, status: http.StatusBadRequest},
+		{name: "case-folded datasource", path: "/query-shapes?profile=reader&Datasource=mysql", credentials: true, status: http.StatusBadRequest},
+		{name: "additional parameter", path: "/query-shapes?profile=reader&datasource=mysql&other=x", credentials: true, status: http.StatusBadRequest},
+		{name: "invalid utf8", path: "/query-shapes?profile=%FF&datasource=mysql", credentials: true, status: http.StatusBadRequest},
+		{name: "invalid datasource utf8", path: "/query-shapes?profile=reader&datasource=%FF", credentials: true, status: http.StatusBadRequest},
+		{name: "unassigned", path: "/query-shapes?profile=unknown&datasource=mysql", credentials: true, status: http.StatusForbidden},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodGet, fixture.path, nil)
@@ -176,14 +180,14 @@ func TestQueryShapesRejectsUnsupportedMethodsBeforeAuthenticationAndAudit(t *tes
 		{method: http.MethodOptions, username: "client", password: "secret"},
 	} {
 		contractRequest := httptest.NewRequest(
-			fixture.method, "http://quordon.test/query-shapes?profile=reader", nil,
+			fixture.method, "http://quordon.test/query-shapes?profile=reader&datasource=mysql", nil,
 		)
 		if valid, _ := contract.ValidateHttpRequestSync(contractRequest); valid {
 			t.Fatalf("%s /query-shapes unexpectedly satisfies the GET-only OpenAPI contract", fixture.method)
 		}
 
 		request := httptest.NewRequest(
-			fixture.method, "http://quordon.test/query-shapes?profile=reader", nil,
+			fixture.method, "http://quordon.test/query-shapes?profile=reader&datasource=mysql", nil,
 		)
 		request.SetBasicAuth(fixture.username, fixture.password)
 		response := httptest.NewRecorder()
@@ -217,7 +221,7 @@ func TestQueryShapesContractRequiresNonemptyRequestIDHeader(t *testing.T) {
 	contract := loadQueryShapesContractValidator(t)
 	defer contract.Release()
 
-	request := httptest.NewRequest(http.MethodGet, "http://quordon.test/query-shapes?profile=analytics", nil)
+	request := httptest.NewRequest(http.MethodGet, "http://quordon.test/query-shapes?profile=analytics&datasource=mysql", nil)
 	request.SetBasicAuth("contract-client", "contract-password")
 	body := `{
 		"policy_profile":"analytics",
@@ -270,7 +274,7 @@ func TestQueryShapesContractValidatesAggregateBranches(t *testing.T) {
 	contract := loadQueryShapesContractValidator(t)
 	defer contract.Release()
 
-	request := httptest.NewRequest(http.MethodGet, "http://quordon.test/query-shapes?profile=analytics", nil)
+	request := httptest.NewRequest(http.MethodGet, "http://quordon.test/query-shapes?profile=analytics&datasource=mysql", nil)
 	request.SetBasicAuth("contract-client", "contract-password")
 	validScalar := `{
 		"policy_profile":"analytics","policy_version":"1","datasource":"primary-mysql","adapter":"mysql8",

@@ -78,13 +78,13 @@ func TestSourceTextProjectionFilterAndAggregateCompilation(t *testing.T) {
 
 func TestSourceTextContinuationIncludesRepresentationInRequestBudget(t *testing.T) {
 	r := queryspec.RepresentationSourceText
-	request := queryspec.NormalizedKeysetRequest{Profile: "reader", Shape: "events_page", Query: queryspec.KeysetSpec{
+	request := queryspec.NormalizedKeysetRequest{Profile: "reader", Datasource: "mysql", Shape: "events_page", Query: queryspec.KeysetSpec{
 		Source:     queryspec.ResourceRef{Schema: "app", Name: "events"},
 		Projection: []queryspec.Selection{{Kind: "field", Field: "wall_time", Representation: r}},
 		OrderBy:    []queryspec.Sort{{Field: "wall_time", Direction: "asc", Representation: r}}, Limit: 2,
 	}, Page: queryspec.KeysetPage{Kind: "first"}}
 	source := keysetSource{keyKinds: []string{"string"}, keyColumns: []keysetSourceColumn{{dataType: "datetime", representation: r}}}
-	continuation := queryspec.KeysetRequest{Kind: "keyset", Profile: request.Profile, Shape: request.Shape, Query: request.Query,
+	continuation := queryspec.KeysetRequest{Kind: "keyset", Profile: request.Profile, Datasource: request.Datasource, Shape: request.Shape, Query: request.Query,
 		Page: queryspec.KeysetPage{Kind: "after", Cursor: []queryspec.KeysetCursorValue{{Type: "string", Value: "9999-12-31 23:59:59.499999"}}}}
 	payload, err := json.Marshal(continuation)
 	if err != nil {

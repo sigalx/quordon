@@ -4,7 +4,8 @@ $ref: './policy.example.yaml'
 $override:
   principals:
     readonly-client:
-      profiles: [query-explainer, data-reader, analytics, analytics-secondary]
+      profiles: [query-explainer, data-reader, analytics]
+      datasources: [primary-mysql, secondary-mysql]
   datasources:
     primary-mysql:
       $ref: './policy.example.yaml#/datasources/primary-mysql'
@@ -15,11 +16,13 @@ $override:
   profiles:
     query-explainer:
       $ref: './policy.example.yaml#/profiles/query-explainer'
+      $override:
+        datasources: [primary-mysql, secondary-mysql]
     data-reader:
       $ref: './policy.example.yaml#/profiles/data-reader'
+      $override:
+        datasources: [primary-mysql, secondary-mysql]
     analytics:
       $ref: './policy.example.yaml#/profiles/analytics'
-    analytics-secondary:
-      $ref: './policy.example.yaml#/profiles/analytics'
       $override:
-        datasource: secondary-mysql
+        datasources: [primary-mysql, secondary-mysql]

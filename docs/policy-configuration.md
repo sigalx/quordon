@@ -5,7 +5,9 @@
 - всё запрещено по умолчанию;
 - Basic Auth username сопоставляется с одним principal;
 - principal получает только явно назначенные profiles;
-- profile связан с одним datasource;
+- principal получает обязательный непустой allowlist datasources;
+- profile получает обязательный непустой allowlist datasources;
+- операция разрешена только для пересечения назначений principal и profile;
 - datasource выбирает один compile-in DBMS adapter;
 - deny имеет приоритет над allow;
 - авторизация применяется к структурированному `QuerySpec`;
@@ -29,21 +31,19 @@ install -m 600 config/policy.example.yaml config/policy.yaml
 
 В 0.1.3 ссылки заменяют узел целиком: profile, allow/deny-list, список shapes,
 отдельный shape, limits или scalar. Runtime получает обычный `Config`. Клиент
-выбирает назначенный profile; один profile связан ровно с одним datasource.
-HTTP API, authorization tokens и discovery используют итоговую policy.
+выбирает назначенную пару profile-datasource. HTTP API, authorization tokens и
+discovery используют итоговую policy.
 
 ```yaml
 profiles:
   reader:
     $ref: './policy.d/bundle-001/reader.yaml'
-  rc-reader:
-    $ref: './policy.d/bundle-001/reader.yaml'
     $override:
-      datasource: rc-backend
+      datasources: [test-backend, rc-backend]
 ```
 
-`reader.yaml` содержит полный профиль, включая datasource. Новый профиль
-нужно явно назначить в `principals.<name>.profiles`. Полный пример:
+`reader.yaml` содержит полный профиль, включая `datasources`. Профиль и каждый
+нужный datasource явно назначаются principal. Полный пример:
 [config/policy.references.yaml](../config/policy.references.yaml).
 
 Узел ссылки содержит только непустую string `$ref` и optional mapping
@@ -191,9 +191,30 @@ principals:
   readonly-client:
     profiles:
       - query-explainer
+    datasources:
+      - primary-mysql
+      - secondary-mysql
 ```
 
-Клиент не может расширить набор profiles параметрами запроса или заголовками.
+Оба списка обязательны, непусты и не допускают null, scalar, пустые имена,
+дубликаты и неизвестные ссылки. Для каждого назначенного profile должно
+существовать хотя бы одно пересечение с `principal.datasources`. Клиент не
+может расширить ни один список параметрами запроса или заголовками.
+
+## Profile datasource allowlist
+
+```yaml
+profiles:
+  analytics:
+    datasources: [primary-mysql, secondary-mysql]
+    operations: [aggregate, list_query_shapes]
+```
+
+Одна policy profile применяется одинаково ко всем перечисленным datasources.
+Если schemas, shapes или limits должны различаться, создаются разные profiles.
+Legacy-поле `profiles.*.datasource` неизвестно и блокирует startup. Общее число
+настроенных profile-datasource пар ограничено фиксированным runtime maximum до
+выделения capacity, discovery и audit state.
 
 ## Datasource
 
@@ -334,7 +355,7 @@ list_query_shapes
 этой операции не используются.
 
 Разрешение операции в policy не означает наличие capability у adapter. После
-проверки назначения profile core проверяет capability и возвращает `501`, если
+проверки назначенной пары profile-datasource core проверяет capability и возвращает `501`, если
 adapter её не реализует. `list_query_shapes` реализует сам core: для неё
 проверяются зависимые adapter capabilities `aggregate` и/или `select_keyset`,
 соответствующие настроенным shapes, и наличие опубликованного startup snapshot.

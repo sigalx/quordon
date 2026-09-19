@@ -945,13 +945,13 @@ func requiredPolicyFields(t reflect.Type) []string {
 	case reflect.TypeFor[BasicUser]():
 		return []string{"principal"}
 	case reflect.TypeFor[Principal]():
-		return []string{"profiles"}
+		return []string{"profiles", "datasources"}
 	case reflect.TypeFor[Datasource]():
 		return []string{"adapter", "tls_required", "pool"}
 	case reflect.TypeFor[PoolConfig]():
 		return []string{"max_open_connections", "max_idle_connections", "max_connection_lifetime_seconds"}
 	case reflect.TypeFor[Profile]():
-		return []string{"datasource", "operations", "resources", "query", "limits"}
+		return []string{"datasources", "operations", "resources", "query", "limits"}
 	case reflect.TypeFor[ResourcePolicy]():
 		return []string{"schemas", "objects"}
 	case reflect.TypeFor[domain.Limits]():

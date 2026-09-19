@@ -116,7 +116,10 @@ func TestKeysetSelectHashesUnassignedProfileInDenialAudit(t *testing.T) {
 	assertServiceErrorKind(t, err, ErrorDenied)
 	if len(sink.Events) != 1 || sink.Events[0].PolicyProfile != "" ||
 		sink.Events[0].RequestedProfileBytes != len(request.Profile) ||
-		len(sink.Events[0].RequestedProfileHash) != 64 || sink.Events[0].ReasonCode != policy.ReasonDeniedOperation {
+		sink.Events[0].RequestedProfileHash != "e06d1e54df2d6ffe7a34cf34978e586c790f06386746e7c98a03ea1f755c0003" ||
+		sink.Events[0].RequestedDatasourceBytes != len(request.Datasource) ||
+		sink.Events[0].RequestedDatasourceHash != "9f12c93ed44428db0cd10bdc5c594cdb14db48caf7c0dd8146a189549021f513" ||
+		sink.Events[0].ReasonCode != policy.ReasonDeniedOperation {
 		t.Fatalf("unassigned-profile audit=%+v", sink.Events)
 	}
 }
@@ -126,8 +129,8 @@ func TestKeysetAuditPreflightBoundsConfiguredIdentitiesWithoutDatasourceCall(t *
 	service, _, closeManager := newKeysetService(t, adapter)
 	defer closeManager()
 	identity := queryShapeAuditIdentity{principal: "client", clientIdentifier: strings.Repeat("u", 1024)}
-	service.queryShapeAuditIdentities = []queryShapeAuditIdentity{identity}
-	service.keysetAuditIdentities = map[string][]queryShapeAuditIdentity{"reader": {identity}}
+	service.queryShapeAuditIdentity = identity
+	service.bindingAuditIdentities = map[policy.BindingKey]queryShapeAuditIdentity{{Profile: "reader", Datasource: "mysql"}: identity}
 	if err := service.validateKeysetAuditBounds(512); err == nil {
 		t.Fatal("oversized keyset audit identity passed startup preflight")
 	}
@@ -440,10 +443,10 @@ func newKeysetServiceWithMaxResult(
 	}
 	cfg := config.Config{
 		Version: 1, PolicyHash: "policy-hash", HardLimits: limits,
-		Principals:  map[string]config.Principal{"client": {Profiles: []string{"reader"}}},
+		Principals:  map[string]config.Principal{"client": {Profiles: []string{"reader"}, Datasources: []string{"mysql"}}},
 		Datasources: map[string]config.Datasource{"mysql": {Adapter: adapter.Name(), DSN: "opaque"}},
 		Profiles: map[string]config.Profile{"reader": {
-			Datasource: "mysql", Operations: []domain.Operation{domain.OperationSelectKeyset}, Limits: limits,
+			Datasources: []string{"mysql"}, Operations: []domain.Operation{domain.OperationSelectKeyset}, Limits: limits,
 			Resources: config.ResourcePolicy{
 				Schemas: config.PatternPolicy{Allow: []string{"app"}},
 				Objects: config.PatternPolicy{Allow: []string{"app.orders"}},
@@ -467,7 +470,7 @@ func newKeysetServiceWithMaxResult(
 
 func keysetServiceRequest() queryspec.KeysetRequest {
 	return queryspec.KeysetRequest{
-		Kind: "keyset", Profile: "reader", Shape: "orders_page",
+		Kind: "keyset", Profile: "reader", Datasource: "mysql", Shape: "orders_page",
 		Query: queryspec.KeysetSpec{
 			Source:     queryspec.ResourceRef{Schema: "app", Name: "orders"},
 			Projection: []queryspec.Selection{{Kind: "field", Field: "id"}},

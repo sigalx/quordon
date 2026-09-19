@@ -9,8 +9,9 @@ import (
 )
 
 type aggregateRequestWire struct {
-	Profile wireString         `json:"profile"`
-	Query   *aggregateSpecWire `json:"query"`
+	Profile    wireString         `json:"profile"`
+	Datasource wireString         `json:"datasource"`
+	Query      *aggregateSpecWire `json:"query"`
 }
 
 type aggregateSpecWire struct {
@@ -62,6 +63,9 @@ func DecodeStrictAggregate(
 	if wire.Profile.Value == "" {
 		return AggregateRequest{}, errors.New("profile must not be empty")
 	}
+	if !wire.Datasource.Set || wire.Datasource.Value == "" {
+		return AggregateRequest{}, errors.New("datasource is required and must not be empty")
+	}
 	if wire.Query == nil {
 		return AggregateRequest{}, errors.New("query is required")
 	}
@@ -75,7 +79,7 @@ func DecodeStrictAggregate(
 	); err != nil {
 		return AggregateRequest{}, err
 	}
-	return AggregateRequest{Profile: wire.Profile.Value, Query: query}, nil
+	return AggregateRequest{Profile: wire.Profile.Value, Datasource: wire.Datasource.Value, Query: query}, nil
 }
 
 func (w aggregateSpecWire) decode(maxFilterDepth int) (AggregateSpec, error) {
@@ -295,14 +299,14 @@ func scanAggregateRequestShape(
 	if !ok || delimiter != '{' {
 		return nil
 	}
-	seen := make(map[string]struct{}, 2)
+	seen := make(map[string]struct{}, 3)
 	for decoder.More() {
 		key, err := nextUniqueObjectKey(decoder, seen)
 		if err != nil {
 			return err
 		}
 		switch key {
-		case "profile":
+		case "profile", "datasource":
 			err = skipJSONValue(decoder)
 		case "query":
 			err = scanAggregateQueryShape(

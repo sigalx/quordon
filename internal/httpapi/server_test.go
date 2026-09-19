@@ -44,7 +44,7 @@ func TestMVPRouteSurfaceAndAuthentication(t *testing.T) {
 		{name: "liveness is public", method: http.MethodGet, path: "/health/live", status: http.StatusOK},
 		{name: "capabilities requires auth", method: http.MethodGet, path: "/capabilities", status: http.StatusUnauthorized},
 		{name: "capabilities accepts auth", method: http.MethodGet, path: "/capabilities", username: "client", password: "secret", status: http.StatusOK},
-		{name: "schema endpoint requires auth", method: http.MethodGet, path: "/schemas/application/objects?profile=explain", status: http.StatusUnauthorized},
+		{name: "schema endpoint requires auth", method: http.MethodGet, path: "/schemas/application/objects?profile=explain&datasource=mysql", status: http.StatusUnauthorized},
 		{name: "select endpoint requires auth", method: http.MethodPost, path: "/queries/select", status: http.StatusUnauthorized},
 		{name: "versioned endpoint is absent", method: http.MethodGet, path: "/v1/capabilities", status: http.StatusNotFound},
 	}
@@ -71,7 +71,7 @@ func TestMixedAggregateWithoutGroupByReturnsUnprocessable(t *testing.T) {
 	defer closeDatabases()
 
 	body := `{
-		"profile":"explain",
+		"profile":"explain","datasource":"mysql",
 		"query":{
 			"source":{"schema":"application","name":"orders"},
 			"projection":[
@@ -114,23 +114,23 @@ func TestSelectRejectsShapesExcludedByItsOpenAPIContract(t *testing.T) {
 	}{
 		{
 			name: "explicit empty group_by",
-			body: `{"profile":"explain","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"}],"group_by":[]}}`,
+			body: `{"profile":"explain","datasource":"mysql","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"}],"group_by":[]}}`,
 		},
 		{
 			name: "aggregate projection",
-			body: `{"profile":"explain","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"aggregate","function":"count"}]}}`,
+			body: `{"profile":"explain","datasource":"mysql","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"aggregate","function":"count"}]}}`,
 		},
 		{
 			name: "empty projection",
-			body: `{"profile":"explain","query":{"source":{"schema":"application","name":"orders"},"projection":[]}}`,
+			body: `{"profile":"explain","datasource":"mysql","query":{"source":{"schema":"application","name":"orders"},"projection":[]}}`,
 		},
 		{
 			name: "invalid source identifier",
-			body: `{"profile":"explain","query":{"source":{"schema":"bad-name","name":"orders"},"projection":[{"kind":"field","field":"id"}]}}`,
+			body: `{"profile":"explain","datasource":"mysql","query":{"source":{"schema":"bad-name","name":"orders"},"projection":[{"kind":"field","field":"id"}]}}`,
 		},
 		{
 			name: "invalid order direction",
-			body: `{"profile":"explain","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"}],"order_by":[{"field":"id","direction":"sideways"}]}}`,
+			body: `{"profile":"explain","datasource":"mysql","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"}],"order_by":[{"field":"id","direction":"sideways"}]}}`,
 		},
 	}
 	for _, test := range tests {
@@ -156,13 +156,19 @@ func TestSchemaEndpointsRequireStrictProfileAndIdentifiers(t *testing.T) {
 
 	for _, path := range []string{
 		"/schemas/application/objects",
-		"/schemas/application/objects?profile=explain&profile=other",
-		"/schemas/application/objects?profile=explain&unknown=value",
-		"/schemas/application/objects?profile=explain&unknown=a;b",
-		"/schemas/application/objects?profile=%FF",
-		"/schemas/application/objects/orders?profile=%FF",
-		"/schemas/not-valid!/objects?profile=explain",
-		"/schemas/application/objects/not-valid!?profile=explain",
+		"/schemas/application/objects?profile=explain",
+		"/schemas/application/objects?profile=explain&datasource=",
+		"/schemas/application/objects?profile=explain&datasource=mysql&profile=other",
+		"/schemas/application/objects?profile=explain&datasource=mysql&datasource=other",
+		"/schemas/application/objects?profile=explain&Datasource=mysql",
+		"/schemas/application/objects?Profile=explain&datasource=mysql",
+		"/schemas/application/objects?profile=explain&datasource=mysql&unknown=value",
+		"/schemas/application/objects?profile=explain&datasource=mysql&unknown=a;b",
+		"/schemas/application/objects?profile=%FF&datasource=mysql",
+		"/schemas/application/objects?profile=explain&datasource=%FF",
+		"/schemas/application/objects/orders?profile=%FF&datasource=mysql",
+		"/schemas/not-valid!/objects?profile=explain&datasource=mysql",
+		"/schemas/application/objects/not-valid!?profile=explain&datasource=mysql",
 	} {
 		request := httptest.NewRequest(http.MethodGet, path, nil)
 		request.SetBasicAuth("client", "secret")
@@ -178,7 +184,7 @@ func TestInvalidUTF8ReturnsBadRequest(t *testing.T) {
 	server, closeDatabases := testServer(t)
 	defer closeDatabases()
 
-	body := []byte(`{"profile":"explain","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"status","operator":"eq","values":[{"type":"string","value":"active"}]}}}`)
+	body := []byte(`{"profile":"explain","datasource":"mysql","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"status","operator":"eq","values":[{"type":"string","value":"active"}]}}}`)
 	body[bytes.Index(body, []byte("active"))] = 0xff
 	request := httptest.NewRequest(http.MethodPost, "/queries/explain", bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
@@ -336,14 +342,14 @@ func testServer(t *testing.T) (*Server, func()) {
 		Authentication: config.Authentication{Basic: config.BasicAuth{Realm: "quordon", Users: map[string]config.BasicUser{
 			"client": {Principal: "test-client", PasswordHashSecretRef: "env:PASSWORD_HASH"},
 		}}},
-		Principals: map[string]config.Principal{"test-client": {Profiles: []string{"explain"}}},
+		Principals: map[string]config.Principal{"test-client": {Profiles: []string{"explain"}, Datasources: []string{"mysql"}}},
 		Datasources: map[string]config.Datasource{"mysql": {
 			Adapter: "mysql8", DSNSecretRef: "env:MYSQL_DSN", TLSRequired: boolPointer(false), Pool: config.PoolConfig{
 				MaxOpenConnections: 1, MaxIdleConnections: 0, MaxConnectionLifetimeSeconds: 60,
 			},
 		}},
 		Profiles: map[string]config.Profile{"explain": {
-			Datasource: "mysql", Operations: []domain.Operation{domain.OperationExplainSelect},
+			Datasources: []string{"mysql"}, Operations: []domain.Operation{domain.OperationExplainSelect},
 			Resources: config.ResourcePolicy{
 				Schemas: config.PatternPolicy{Allow: []string{"application"}},
 				Objects: config.PatternPolicy{Allow: []string{"application.*"}},

@@ -105,7 +105,7 @@ func TestKeysetPaginationDesignRequestBranches(t *testing.T) {
 
 	firstPage := `{
 		"kind":"keyset",
-		"profile":"reader",
+		"profile":"reader","datasource":"mysql",
 		"shape":"employees_by_id",
 		"query":{
 			"source":{"schema":"application","name":"employees"},
@@ -178,7 +178,7 @@ func TestKeysetPaginationTemporalCursorSemanticValidation(t *testing.T) {
 	defer contract.Release()
 
 	base := `{
-		"kind":"keyset","profile":"reader","shape":"events_by_time",
+		"kind":"keyset","profile":"reader","datasource":"mysql","shape":"events_by_time",
 		"query":{"source":{"schema":"application","name":"events"},"projection":[{"kind":"field","field":"occurred_at"}],"order_by":[{"field":"occurred_at","direction":"asc"}],"limit":100},
 		"page":{"kind":"after","cursor":[{"type":"timestamp","value":"2026-09-15T12:34:56Z"}]}
 	}`
@@ -207,7 +207,7 @@ func TestKeysetPaginationDesignPreservesLegacySelectBranch(t *testing.T) {
 	defer contract.Release()
 
 	legacyBody := `{
-		"profile":"reader",
+		"profile":"reader","datasource":"mysql",
 		"query":{
 			"source":{"schema":"application","name":"employees"},
 			"projection":[{"kind":"field","field":"id"}],
@@ -249,11 +249,11 @@ func TestKeysetPaginationDesignBindsSuccessToRequestBranch(t *testing.T) {
 	defer contract.Release()
 
 	legacyRequest := `{
-		"profile":"reader",
+		"profile":"reader","datasource":"mysql",
 		"query":{"source":{"schema":"application","name":"employees"},"projection":[{"kind":"field","field":"id"}],"limit":10}
 	}`
 	keysetRequest := `{
-		"kind":"keyset","profile":"reader","shape":"employees_by_id",
+		"kind":"keyset","profile":"reader","datasource":"mysql","shape":"employees_by_id",
 		"query":{"source":{"schema":"application","name":"employees"},"projection":[{"kind":"field","field":"id"}],"order_by":[{"field":"id","direction":"asc"}],"limit":10},
 		"page":{"kind":"first"}
 	}`
@@ -333,7 +333,7 @@ func TestKeysetPaginationDesignResponseBranches(t *testing.T) {
 	contract := loadKeysetPaginationDesignValidator(t)
 	defer contract.Release()
 	request := keysetDesignRequest(`{
-		"kind":"keyset","profile":"reader","shape":"employees_by_id",
+		"kind":"keyset","profile":"reader","datasource":"mysql","shape":"employees_by_id",
 		"query":{"source":{"schema":"application","name":"employees"},"projection":[{"kind":"field","field":"id"}],"order_by":[{"field":"id","direction":"asc"}],"limit":1},
 		"page":{"kind":"first"}
 	}`)
@@ -392,7 +392,7 @@ func TestKeysetPaginationDesignDiscoveryJSON(t *testing.T) {
 	contract := loadOpenAPI31Validator(t)
 	defer contract.Release()
 
-	request := httptest.NewRequest(http.MethodGet, "http://quordon.test/query-shapes?profile=reader", nil)
+	request := httptest.NewRequest(http.MethodGet, "http://quordon.test/query-shapes?profile=reader&datasource=mysql", nil)
 	request.Header.Set("Accept", "application/json")
 	request.SetBasicAuth("contract-client", "contract-password")
 	body := `{
@@ -480,7 +480,7 @@ func TestKeysetPaginationDesignDiscoveryJSON(t *testing.T) {
 func TestKeysetPaginationDesignDiscoveryErrorsAreClosed(t *testing.T) {
 	contract := loadOpenAPI31Validator(t)
 	defer contract.Release()
-	request := httptest.NewRequest(http.MethodGet, "http://quordon.test/query-shapes?profile=reader", nil)
+	request := httptest.NewRequest(http.MethodGet, "http://quordon.test/query-shapes?profile=reader&datasource=mysql", nil)
 	request.Header.Set("Accept", "application/json")
 	request.SetBasicAuth("contract-client", "contract-password")
 
@@ -545,7 +545,7 @@ func TestQueryShapeJSONContract(t *testing.T) {
 		"application/json",
 	} {
 		t.Run("accept "+accept, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodGet, "http://quordon.test/query-shapes?profile=reader", nil)
+			request := httptest.NewRequest(http.MethodGet, "http://quordon.test/query-shapes?profile=reader&datasource=mysql", nil)
 			if accept != "" {
 				request.Header.Set("Accept", accept)
 			}
@@ -557,7 +557,7 @@ func TestQueryShapeJSONContract(t *testing.T) {
 		})
 	}
 
-	request := httptest.NewRequest(http.MethodGet, "http://quordon.test/query-shapes?profile=reader", nil)
+	request := httptest.NewRequest(http.MethodGet, "http://quordon.test/query-shapes?profile=reader&datasource=mysql", nil)
 	request.Header.Set("Accept", "text/plain")
 	request.SetBasicAuth("contract-client", "contract-password")
 	valid, _ := contract.ValidateHttpRequestSync(request)
@@ -565,7 +565,7 @@ func TestQueryShapeJSONContract(t *testing.T) {
 		t.Fatal("unknown discovery Accept value is OpenAPI-valid")
 	}
 
-	legacyRequest := httptest.NewRequest(http.MethodGet, "http://quordon.test/query-shapes?profile=reader", nil)
+	legacyRequest := httptest.NewRequest(http.MethodGet, "http://quordon.test/query-shapes?profile=reader&datasource=mysql", nil)
 	legacyRequest.Header.Set("Accept", "application/json")
 	legacyRequest.SetBasicAuth("contract-client", "contract-password")
 	legacyResponse := &http.Response{
@@ -595,7 +595,7 @@ func TestQueryShapeJSONIncludesTimeBuckets(t *testing.T) {
 	defer contract.Release()
 	server, _, closeDatabases := successfulTimeBucketContractServer(t)
 	defer closeDatabases()
-	request := httptest.NewRequest(http.MethodGet, "http://quordon.test/query-shapes?profile=reader", nil)
+	request := httptest.NewRequest(http.MethodGet, "http://quordon.test/query-shapes?profile=reader&datasource=mysql", nil)
 	request.SetBasicAuth("client", "secret")
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
@@ -613,7 +613,7 @@ func TestSuccessfulKeysetHandlerMatchesExecutableOpenAPI31(t *testing.T) {
 	server, sink, closeDatabases := successfulKeysetContractServer(t)
 	defer closeDatabases()
 	body := `{
-		"kind":"keyset","profile":"reader","shape":"orders_page",
+		"kind":"keyset","profile":"reader","datasource":"mysql","shape":"orders_page",
 		"query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"order_by":[{"field":"id","direction":"asc"}],"limit":2},
 		"page":{"kind":"first"}
 	}`
@@ -656,14 +656,14 @@ func TestSuccessfulKeysetDiscoveryHandlerMatchesExecutableOpenAPI31(t *testing.T
 	server, sink, closeDatabases := successfulKeysetContractServer(t)
 	defer closeDatabases()
 
-	runtimeRequest := newContractRequest(http.MethodGet, "/query-shapes?profile=reader", "")
+	runtimeRequest := newContractRequest(http.MethodGet, "/query-shapes?profile=reader&datasource=mysql", "")
 	runtimeRequest.Header.Set("Accept", domain.QueryShapesMediaType)
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, runtimeRequest)
 	if response.Code != http.StatusOK || response.Header().Get("Content-Type") != domain.QueryShapesMediaType {
 		t.Fatalf("keyset discovery status=%d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
 	}
-	contractRequest := newContractRequest(http.MethodGet, "/query-shapes?profile=reader", "")
+	contractRequest := newContractRequest(http.MethodGet, "/query-shapes?profile=reader&datasource=mysql", "")
 	contractRequest.Header.Set("Accept", domain.QueryShapesMediaType)
 	valid, validationErrors := contract.ValidateHttpResponse(contractRequest, response.Result())
 	if !valid {
@@ -682,7 +682,7 @@ func TestSuccessfulKeysetDiscoveryHandlerMatchesExecutableOpenAPI31(t *testing.T
 	}
 
 	for _, mediaType := range []string{"", "*/*", domain.QueryShapesMediaType} {
-		request := newContractRequest(http.MethodGet, "/query-shapes?profile=reader", "")
+		request := newContractRequest(http.MethodGet, "/query-shapes?profile=reader&datasource=mysql", "")
 		if mediaType != "" {
 			request.Header.Set("Accept", mediaType)
 		}

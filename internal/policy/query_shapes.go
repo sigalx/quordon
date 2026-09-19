@@ -26,21 +26,32 @@ type QueryShapeResource struct {
 	Object string
 }
 
-type QueryShapeDiscovery struct {
+// QueryShapeDocument is the datasource-invariant, immutable part of a query
+// shape discovery snapshot. Its fields remain private so only policy can
+// construct a document that is safe to publish.
+type QueryShapeDocument struct {
 	owner         *Snapshot
 	profile       string
-	policyVersion string
-	policyHash    string
-	datasource    string
-	adapter       string
-	generation    string
-	shapeSetHash  string
 	semantics     domain.IdentifierSemantics
-	limits        domain.Limits
-	payload       []byte
+	shapeSetHash  string
+	shapesPayload []byte
 	resources     []QueryShapeResource
 	fields        []string
 	shapeCount    int
+}
+
+type QueryShapeDiscovery struct {
+	owner          *Snapshot
+	profile        string
+	policyVersion  string
+	policyHash     string
+	datasource     string
+	adapter        string
+	generation     string
+	limits         domain.Limits
+	document       *QueryShapeDocument
+	envelopePrefix []byte
+	resultBytes    int
 }
 
 type AuthorizedQueryShapeList struct {
@@ -84,54 +95,53 @@ func (a AuthorizedQueryShapeList) Generation() string {
 	return a.discovery.generation
 }
 func (a AuthorizedQueryShapeList) ShapeSetHash() string {
-	if a.discovery == nil {
+	if a.discovery == nil || a.discovery.document == nil {
 		return ""
 	}
-	return a.discovery.shapeSetHash
+	return a.discovery.document.shapeSetHash
 }
 func (a AuthorizedQueryShapeList) ShapeCount() int {
-	if a.discovery == nil {
+	if a.discovery == nil || a.discovery.document == nil {
 		return 0
 	}
-	return a.discovery.shapeCount
+	return a.discovery.document.shapeCount
 }
 func (a AuthorizedQueryShapeList) ResultBytes() int {
 	if a.discovery == nil {
 		return 0
 	}
-	return len(a.responsePayload())
+	return a.discovery.resultBytes
 }
 func (a AuthorizedQueryShapeList) Resources() []QueryShapeResource {
-	if a.discovery == nil {
+	if a.discovery == nil || a.discovery.document == nil {
 		return nil
 	}
-	return slices.Clone(a.discovery.resources)
+	return slices.Clone(a.discovery.document.resources)
 }
 func (a AuthorizedQueryShapeList) Fields() []string {
-	if a.discovery == nil {
+	if a.discovery == nil || a.discovery.document == nil {
 		return nil
 	}
-	return slices.Clone(a.discovery.fields)
+	return slices.Clone(a.discovery.document.fields)
 }
 func (a AuthorizedQueryShapeList) ResponsePayload() ([]byte, error) {
-	payload := a.responsePayload()
 	if a.operation != domain.OperationListQueryShapes || a.discovery == nil ||
-		a.ShapeCount() == 0 || len(payload) == 0 ||
-		len(payload) > a.discovery.limits.MaxResultBytes {
+		a.discovery.document == nil || a.ShapeCount() == 0 ||
+		a.discovery.resultBytes <= 0 || a.discovery.resultBytes > a.discovery.limits.MaxResultBytes {
 		return nil, errors.New("invalid list_query_shapes authorization")
 	}
-	return slices.Clone(payload), nil
-}
-
-func (a AuthorizedQueryShapeList) responsePayload() []byte {
-	if a.discovery == nil {
-		return nil
+	payload := make([]byte, 0, a.discovery.resultBytes)
+	payload = append(payload, a.discovery.envelopePrefix...)
+	payload = append(payload, a.discovery.document.shapesPayload...)
+	payload = append(payload, '}')
+	if len(payload) != a.discovery.resultBytes {
+		return nil, errors.New("query-shape response size invariant failed")
 	}
-	return a.discovery.payload
+	return payload, nil
 }
 
 func (d QueryShapeDiscovery) MatchesSemantics(semantics domain.IdentifierSemantics) bool {
-	return d.semantics == semantics
+	return d.document != nil && d.document.semantics == semantics
 }
 
 func (d QueryShapeDiscovery) Datasource() string { return d.datasource }
@@ -139,53 +149,23 @@ func (d QueryShapeDiscovery) Datasource() string { return d.datasource }
 // ValidateQueryShapeDiscoveryStatic rejects disclosure errors that do not
 // depend on server identifier semantics. Callers use it for every publishing
 // profile before the first datasource probe.
-func (s *Snapshot) ValidateQueryShapeDiscoveryStatic(profileName, adapter string) error {
-	profile, ok := s.profiles[profileName]
-	if !ok || !slices.Contains(profile.Operations, domain.OperationListQueryShapes) ||
-		len(profile.Query.AggregateShapes)+len(profile.Query.KeysetSelectShapes) == 0 {
-		return fmt.Errorf("profile %q does not configure publishable query shapes", profileName)
-	}
-	if adapter == "" {
-		return fmt.Errorf("profile %q cannot publish query shapes", profileName)
-	}
-	configuredShapes := cloneAggregateShapes(profile.Query.AggregateShapes)
-	slices.SortFunc(configuredShapes, func(a, b config.AggregateShape) int {
-		return strings.Compare(a.Name, b.Name)
-	})
-	publicShapes := make([]publicAggregateQueryShape, 0, len(configuredShapes))
-	for index := range configuredShapes {
-		shape := configuredShapes[index]
-		if !aggregateShapeFeaturesAllowed(profile.Query, shape) {
-			return fmt.Errorf("profile %q aggregate shape %q references a denied query feature", profileName, shape.Name)
-		}
-		publicShape, err := buildPublicAggregateQueryShape(shape, domain.IdentifierSemantics{})
-		if err != nil {
-			return fmt.Errorf("profile %q aggregate shape %q: %w", profileName, shape.Name, err)
-		}
-		publicShapes = append(publicShapes, publicShape)
-	}
-	maximum := s.hardLimits.Min(profile.Limits).MaxResultBytes
-	keysetShapes, err := buildPublicKeysetQueryShapes(profile.Query.KeysetSelectShapes, domain.IdentifierSemantics{})
+func (s *Snapshot) ValidateQueryShapeDiscoveryStatic(profileName, datasource, adapter string) error {
+	document, err := s.BuildQueryShapeDocument(profileName, domain.IdentifierSemantics{})
 	if err != nil {
 		return err
 	}
-	_, _, err = encodeQueryShapeResponse(
-		profileName, s.version, profile.Datasource, adapter, publicShapes, keysetShapes, maximum,
-	)
+	_, err = s.BuildQueryShapeDiscoveryFromDocument(profileName, datasource, adapter, document)
 	return err
 }
 
-func (s *Snapshot) BuildQueryShapeDiscovery(
-	profileName, adapter string,
+func (s *Snapshot) BuildQueryShapeDocument(
+	profileName string,
 	semantics domain.IdentifierSemantics,
-) (QueryShapeDiscovery, error) {
+) (*QueryShapeDocument, error) {
 	profile, ok := s.profiles[profileName]
 	if !ok || !slices.Contains(profile.Operations, domain.OperationListQueryShapes) ||
 		len(profile.Query.AggregateShapes)+len(profile.Query.KeysetSelectShapes) == 0 {
-		return QueryShapeDiscovery{}, fmt.Errorf("profile %q does not configure publishable query shapes", profileName)
-	}
-	if adapter == "" {
-		return QueryShapeDiscovery{}, fmt.Errorf("profile %q cannot publish query shapes", profileName)
+		return nil, fmt.Errorf("profile %q does not configure publishable query shapes", profileName)
 	}
 
 	configuredShapes := cloneAggregateShapes(profile.Query.AggregateShapes)
@@ -198,7 +178,7 @@ func (s *Snapshot) BuildQueryShapeDiscovery(
 	for index := range configuredShapes {
 		shape := configuredShapes[index]
 		if !aggregateShapeFeaturesAllowed(profile.Query, shape) {
-			return QueryShapeDiscovery{}, fmt.Errorf("profile %q aggregate shape %q references a denied query feature", profileName, shape.Name)
+			return nil, fmt.Errorf("profile %q aggregate shape %q references a denied query feature", profileName, shape.Name)
 		}
 		if !allowed(
 			profile.Resources.Schemas,
@@ -209,7 +189,7 @@ func (s *Snapshot) BuildQueryShapeDiscovery(
 			[]string{shape.Source.Schema, shape.Source.Name},
 			[]bool{semantics.CaseInsensitiveSchemas, semantics.CaseInsensitiveObjects},
 		) {
-			return QueryShapeDiscovery{}, fmt.Errorf("profile %q aggregate shape %q references a denied resource", profileName, shape.Name)
+			return nil, fmt.Errorf("profile %q aggregate shape %q references a denied resource", profileName, shape.Name)
 		}
 		fields := configuredAggregateShapeFields(shape)
 		for _, field := range fields {
@@ -222,7 +202,7 @@ func (s *Snapshot) BuildQueryShapeDiscovery(
 					semantics.CaseInsensitiveFields,
 				},
 			) {
-				return QueryShapeDiscovery{}, fmt.Errorf("profile %q aggregate shape %q references a denied field", profileName, shape.Name)
+				return nil, fmt.Errorf("profile %q aggregate shape %q references a denied field", profileName, shape.Name)
 			}
 			key := canonicalPolicyIdentifier(field, semantics.CaseInsensitiveFields)
 			if _, exists := fieldsByKey[key]; !exists {
@@ -237,13 +217,13 @@ func (s *Snapshot) BuildQueryShapeDiscovery(
 		}
 		publicShape, err := buildPublicAggregateQueryShape(shape, semantics)
 		if err != nil {
-			return QueryShapeDiscovery{}, fmt.Errorf("profile %q aggregate shape %q: %w", profileName, shape.Name, err)
+			return nil, fmt.Errorf("profile %q aggregate shape %q: %w", profileName, shape.Name, err)
 		}
 		publicShapes = append(publicShapes, publicShape)
 	}
 	publicKeysetShapes, err := buildPublicKeysetQueryShapes(profile.Query.KeysetSelectShapes, semantics)
 	if err != nil {
-		return QueryShapeDiscovery{}, err
+		return nil, err
 	}
 	for _, shape := range profile.Query.KeysetSelectShapes {
 		if !allowed(
@@ -253,14 +233,14 @@ func (s *Snapshot) BuildQueryShapeDiscovery(
 			profile.Resources.Objects, []string{shape.Source.Schema, shape.Source.Name},
 			[]bool{semantics.CaseInsensitiveSchemas, semantics.CaseInsensitiveObjects},
 		) {
-			return QueryShapeDiscovery{}, fmt.Errorf("profile %q keyset shape %q references a denied resource", profileName, shape.Name)
+			return nil, fmt.Errorf("profile %q keyset shape %q references a denied resource", profileName, shape.Name)
 		}
 		for _, field := range configuredKeysetShapeFields(shape) {
 			if !allowed(
 				profile.Resources.Fields, []string{shape.Source.Schema, shape.Source.Name, field},
 				[]bool{semantics.CaseInsensitiveSchemas, semantics.CaseInsensitiveObjects, semantics.CaseInsensitiveFields},
 			) {
-				return QueryShapeDiscovery{}, fmt.Errorf("profile %q keyset shape %q references a denied field", profileName, shape.Name)
+				return nil, fmt.Errorf("profile %q keyset shape %q references a denied field", profileName, shape.Name)
 			}
 			key := canonicalPolicyIdentifier(field, semantics.CaseInsensitiveFields)
 			fieldsByKey[key] = key
@@ -288,31 +268,72 @@ func (s *Snapshot) BuildQueryShapeDiscovery(
 	}
 	slices.Sort(fields)
 
+	maximum := s.hardLimits.Min(profile.Limits).MaxResultBytes
+	shapesPayload, shapeSetHash, err := encodeQueryShapeDocument(
+		profileName, publicShapes, publicKeysetShapes, maximum,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &QueryShapeDocument{
+		owner: s, profile: profileName, semantics: semantics,
+		shapeSetHash: shapeSetHash, shapesPayload: shapesPayload,
+		resources: resources, fields: fields,
+		shapeCount: len(publicShapes) + len(publicKeysetShapes),
+	}, nil
+}
+
+func (s *Snapshot) BuildQueryShapeDiscoveryFromDocument(
+	profileName, datasource, adapter string,
+	document *QueryShapeDocument,
+) (QueryShapeDiscovery, error) {
+	profile, ok := s.profiles[profileName]
+	if !ok || !slices.Contains(profile.Operations, domain.OperationListQueryShapes) ||
+		!slices.Contains(profile.Datasources, datasource) ||
+		len(profile.Query.AggregateShapes)+len(profile.Query.KeysetSelectShapes) == 0 {
+		return QueryShapeDiscovery{}, fmt.Errorf("profile %q does not configure publishable query shapes", profileName)
+	}
+	if adapter == "" {
+		return QueryShapeDiscovery{}, fmt.Errorf("profile %q cannot publish query shapes", profileName)
+	}
+	if document == nil || document.owner != s || document.profile != profileName ||
+		document.shapeCount == 0 || len(document.shapesPayload) == 0 {
+		return QueryShapeDiscovery{}, fmt.Errorf("profile %q query-shape document does not match policy", profileName)
+	}
 	limits := s.hardLimits.Min(profile.Limits)
-	payload, shapeSetHash, err := encodeQueryShapeResponse(
-		profileName, s.version, profile.Datasource, adapter, publicShapes, publicKeysetShapes, limits.MaxResultBytes,
+	envelopePrefix, resultBytes, err := encodeQueryShapeEnvelope(
+		profileName, s.version, datasource, adapter, len(document.shapesPayload), limits.MaxResultBytes,
 	)
 	if err != nil {
 		return QueryShapeDiscovery{}, err
 	}
 	generationInput := fmt.Sprintf(
 		"%s\x00%s\x00%s\x00%t%t%t",
-		s.hash, profileName, adapter,
-		semantics.CaseInsensitiveSchemas,
-		semantics.CaseInsensitiveObjects,
-		semantics.CaseInsensitiveFields,
+		s.hash, profileName+"\x00"+datasource, adapter,
+		document.semantics.CaseInsensitiveSchemas,
+		document.semantics.CaseInsensitiveObjects,
+		document.semantics.CaseInsensitiveFields,
 	)
 	generationDigest := sha256.Sum256([]byte(generationInput))
 	discovery := QueryShapeDiscovery{
 		owner:   s,
 		profile: profileName, policyVersion: s.version, policyHash: s.hash,
-		datasource: profile.Datasource, adapter: adapter,
-		generation: hex.EncodeToString(generationDigest[:]), shapeSetHash: shapeSetHash,
-		semantics: semantics, limits: limits,
-		payload:   payload,
-		resources: resources, fields: fields, shapeCount: len(publicShapes) + len(publicKeysetShapes),
+		datasource: datasource, adapter: adapter,
+		generation: hex.EncodeToString(generationDigest[:]), limits: limits,
+		document: document, envelopePrefix: envelopePrefix, resultBytes: resultBytes,
 	}
 	return discovery, nil
+}
+
+func (s *Snapshot) BuildQueryShapeDiscovery(
+	profileName, datasource, adapter string,
+	semantics domain.IdentifierSemantics,
+) (QueryShapeDiscovery, error) {
+	document, err := s.BuildQueryShapeDocument(profileName, semantics)
+	if err != nil {
+		return QueryShapeDiscovery{}, err
+	}
+	return s.BuildQueryShapeDiscoveryFromDocument(profileName, datasource, adapter, document)
 }
 
 func aggregateShapeFeaturesAllowed(policy config.QueryPolicy, shape config.AggregateShape) bool {
@@ -365,28 +386,26 @@ func aggregateShapesContainTimeBucket(shapes []config.AggregateShape) bool {
 }
 
 func (s *Snapshot) AuthorizeQueryShapeList(
-	principal, credentialIdentifier, profileName string,
+	binding AuthorizedBinding, credentialIdentifier string,
 	discovery *QueryShapeDiscovery,
 ) (AuthorizedQueryShapeList, error) {
 	if credentialIdentifier == "" {
 		return AuthorizedQueryShapeList{}, errors.New("query-shape authorization requires a credential identifier")
 	}
-	principalConfig, ok := s.principals[principal]
-	if !ok || !slices.Contains(principalConfig.Profiles, profileName) {
-		return AuthorizedQueryShapeList{}, &Denial{ReasonCode: ReasonDeniedOperation}
-	}
-	profile, ok := s.profiles[profileName]
-	if !ok || !slices.Contains(profile.Operations, domain.OperationListQueryShapes) ||
+	profile, err := s.profileForBinding(binding, domain.OperationListQueryShapes)
+	if err != nil ||
 		len(profile.Query.AggregateShapes)+len(profile.Query.KeysetSelectShapes) == 0 {
 		return AuthorizedQueryShapeList{}, &Denial{ReasonCode: ReasonDeniedOperation}
 	}
-	if discovery == nil || discovery.owner != s || discovery.profile != profileName || discovery.policyVersion != s.version ||
-		discovery.policyHash != s.hash || discovery.datasource != profile.Datasource ||
-		discovery.shapeCount == 0 || len(discovery.payload) == 0 {
+	if discovery == nil || discovery.owner != s || discovery.profile != binding.Profile() || discovery.policyVersion != s.version ||
+		discovery.policyHash != s.hash || discovery.datasource != binding.Datasource() ||
+		discovery.document == nil || discovery.document.owner != s ||
+		discovery.document.profile != discovery.profile || discovery.document.shapeCount == 0 ||
+		len(discovery.document.shapesPayload) == 0 || len(discovery.envelopePrefix) == 0 || discovery.resultBytes <= 0 {
 		return AuthorizedQueryShapeList{}, errors.New("query-shape discovery snapshot does not match policy")
 	}
 	return AuthorizedQueryShapeList{
-		principal: principal, credentialIdentifier: credentialIdentifier,
+		principal: binding.Principal(), credentialIdentifier: credentialIdentifier,
 		operation: domain.OperationListQueryShapes, discovery: discovery,
 	}, nil
 }

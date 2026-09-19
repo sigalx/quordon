@@ -85,13 +85,13 @@ func (s *Server) queryShapes(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "Accept must select a supported query-shape representation")
 		return
 	}
-	profile, ok := s.profileRequest(w, r)
+	target, ok := s.profileRequest(w, r)
 	if !ok {
 		return
 	}
 	client := principalFromContext(r.Context())
 	payload, err := s.service.ListQueryShapes(
-		r.Context(), requestID(r), client.principal, client.clientIdentifier, profile,
+		r.Context(), requestID(r), client.principal, client.clientIdentifier, target.profile, target.datasource,
 	)
 	if err != nil {
 		s.writeServiceError(w, r, err)
@@ -271,14 +271,14 @@ func (s *Server) readQueryRequest(
 }
 
 func (s *Server) listObjects(w http.ResponseWriter, r *http.Request) {
-	profile, ok := s.schemaRequest(w, r)
+	target, ok := s.schemaRequest(w, r)
 	if !ok {
 		return
 	}
 	client := principalFromContext(r.Context())
 	result, err := s.service.ListObjects(
 		r.Context(), requestID(r), client.principal, client.clientIdentifier,
-		profile, r.PathValue("schema"),
+		target.profile, target.datasource, r.PathValue("schema"),
 	)
 	if err != nil {
 		s.writeServiceError(w, r, err)
@@ -288,7 +288,7 @@ func (s *Server) listObjects(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) describeObject(w http.ResponseWriter, r *http.Request) {
-	profile, ok := s.schemaRequest(w, r)
+	target, ok := s.schemaRequest(w, r)
 	if !ok {
 		return
 	}
@@ -299,7 +299,7 @@ func (s *Server) describeObject(w http.ResponseWriter, r *http.Request) {
 	}
 	client := principalFromContext(r.Context())
 	result, err := s.service.DescribeObject(
-		r.Context(), requestID(r), client.principal, client.clientIdentifier, profile,
+		r.Context(), requestID(r), client.principal, client.clientIdentifier, target.profile, target.datasource,
 		queryspec.ResourceRef{Schema: r.PathValue("schema"), Name: object},
 	)
 	if err != nil {
@@ -313,7 +313,7 @@ func (s *Server) describeObjectStatistics(w http.ResponseWriter, r *http.Request
 	if !s.requireEmptyRequestBody(w, r) {
 		return
 	}
-	profile, ok := s.schemaRequest(w, r)
+	target, ok := s.schemaRequest(w, r)
 	if !ok {
 		return
 	}
@@ -324,7 +324,7 @@ func (s *Server) describeObjectStatistics(w http.ResponseWriter, r *http.Request
 	}
 	client := principalFromContext(r.Context())
 	payload, err := s.service.DescribeObjectStatistics(
-		r.Context(), requestID(r), client.principal, client.clientIdentifier, profile,
+		r.Context(), requestID(r), client.principal, client.clientIdentifier, target.profile, target.datasource,
 		queryspec.ResourceRef{Schema: r.PathValue("schema"), Name: object},
 	)
 	if err != nil {
@@ -350,26 +350,34 @@ func (s *Server) requireEmptyRequestBody(w http.ResponseWriter, r *http.Request)
 	return true
 }
 
-func (s *Server) schemaRequest(w http.ResponseWriter, r *http.Request) (string, bool) {
+func (s *Server) schemaRequest(w http.ResponseWriter, r *http.Request) (requestTarget, bool) {
 	if !queryspec.IsIdentifier(r.PathValue("schema")) {
 		s.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "Schema name is invalid")
-		return "", false
+		return requestTarget{}, false
 	}
 	return s.profileRequest(w, r)
 }
 
-func (s *Server) profileRequest(w http.ResponseWriter, r *http.Request) (string, bool) {
+type requestTarget struct {
+	profile    string
+	datasource string
+}
+
+func (s *Server) profileRequest(w http.ResponseWriter, r *http.Request) (requestTarget, bool) {
 	query, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
 		s.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "Query parameters are malformed")
-		return "", false
+		return requestTarget{}, false
 	}
-	profiles, ok := query["profile"]
-	if !ok || len(profiles) != 1 || profiles[0] == "" || !utf8.ValidString(profiles[0]) || len(query) != 1 {
-		s.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "Exactly one profile query parameter is required")
-		return "", false
+	profiles, profileOK := query["profile"]
+	datasources, datasourceOK := query["datasource"]
+	if !profileOK || len(profiles) != 1 || profiles[0] == "" || !utf8.ValidString(profiles[0]) ||
+		!datasourceOK || len(datasources) != 1 || datasources[0] == "" || !utf8.ValidString(datasources[0]) ||
+		len(query) != 2 {
+		s.writeError(w, r, http.StatusBadRequest, "INVALID_REQUEST", "Exactly one profile and datasource query parameter are required")
+		return requestTarget{}, false
 	}
-	return profiles[0], true
+	return requestTarget{profile: profiles[0], datasource: datasources[0]}, true
 }
 
 func (s *Server) noStore(next http.Handler) http.Handler {

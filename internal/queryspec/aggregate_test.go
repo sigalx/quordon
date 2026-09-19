@@ -12,8 +12,8 @@ import (
 
 func TestDecodeStrictAggregateAcceptsClosedScalarAndGroupedShapes(t *testing.T) {
 	for _, body := range []string{
-		`{"profile":"analytics","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}]}}`,
-		`{"profile":"analytics","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"dimension","field":"status"},{"kind":"measure","function":"count_distinct","field":"customer_id","alias":"customers"}],"filter":{"kind":"predicate","field":"active","operator":"eq","values":[{"type":"boolean","value":true}]},"order_by":[{"kind":"measure","alias":"customers","direction":"desc"}],"limit":10}}`,
+		`{"profile":"analytics","datasource":"mysql","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}]}}`,
+		`{"profile":"analytics","datasource":"mysql","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"dimension","field":"status"},{"kind":"measure","function":"count_distinct","field":"customer_id","alias":"customers"}],"filter":{"kind":"predicate","field":"active","operator":"eq","values":[{"type":"boolean","value":true}]},"order_by":[{"kind":"measure","alias":"customers","direction":"desc"}],"limit":10}}`,
 	} {
 		if _, err := DecodeStrictAggregate([]byte(body), 8, 200, 200); err != nil {
 			t.Fatalf("DecodeStrictAggregate() error = %v for %s", err, body)
@@ -22,7 +22,7 @@ func TestDecodeStrictAggregateAcceptsClosedScalarAndGroupedShapes(t *testing.T) 
 }
 
 func TestDecodeStrictAggregateAcceptsUTCTimeBucket(t *testing.T) {
-	body := `{"profile":"analytics","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"time_bucket","field":"created_at","unit":"day","timezone":"UTC","alias":"created_day"},{"kind":"measure","function":"count_all","alias":"total"}],"order_by":[{"kind":"time_bucket","alias":"created_day","direction":"asc"}],"limit":10}}`
+	body := `{"profile":"analytics","datasource":"mysql","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"time_bucket","field":"created_at","unit":"day","timezone":"UTC","alias":"created_day"},{"kind":"measure","function":"count_all","alias":"total"}],"order_by":[{"kind":"time_bucket","alias":"created_day","direction":"asc"}],"limit":10}}`
 	request, err := DecodeStrictAggregate([]byte(body), 8, 200, 200)
 	if err != nil {
 		t.Fatalf("DecodeStrictAggregate() error = %v", err)
@@ -37,7 +37,7 @@ func TestDecodeStrictAggregateAcceptsUTCTimeBucket(t *testing.T) {
 }
 
 func TestDecodeStrictAggregateRejectsInvalidTimeBucketBranches(t *testing.T) {
-	valid := `{"profile":"analytics","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"time_bucket","field":"created_at","unit":"day","timezone":"UTC","alias":"created_day"},{"kind":"measure","function":"count_all","alias":"total"}],"limit":10}}`
+	valid := `{"profile":"analytics","datasource":"mysql","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"time_bucket","field":"created_at","unit":"day","timezone":"UTC","alias":"created_day"},{"kind":"measure","function":"count_all","alias":"total"}],"limit":10}}`
 	tests := map[string]string{
 		"missing unit":         strings.Replace(valid, `,"unit":"day"`, "", 1),
 		"null timezone":        strings.Replace(valid, `"timezone":"UTC"`, `"timezone":null`, 1),
@@ -73,27 +73,33 @@ func TestValidateAggregateRejectsRepeatedTimeBucketSourceBeforeNormalization(t *
 }
 
 func TestDecodeStrictAggregateLeavesCaseFoldedOutputCollisionToSemanticValidation(t *testing.T) {
-	body := `{"profile":"analytics","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"},{"kind":"measure","function":"count_all","alias":"TOTAL"}]}}`
+	body := `{"profile":"analytics","datasource":"mysql","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"},{"kind":"measure","function":"count_all","alias":"TOTAL"}]}}`
 	if _, err := DecodeStrictAggregate([]byte(body), 8, 200, 200); err != nil {
 		t.Fatalf("OpenAPI-valid request was rejected by transport validation: %v", err)
 	}
 }
 
 func TestDecodeStrictAggregateRejectsTransportContractViolations(t *testing.T) {
-	valid := `{"profile":"analytics","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}]}}`
+	valid := `{"profile":"analytics","datasource":"mysql","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}]}}`
 	tests := map[string]string{
 		"non-object":                    `[]`,
-		"missing profile":               strings.Replace(valid, `"profile":"analytics",`, "", 1),
-		"null query":                    `{"profile":"analytics","query":null}`,
+		"missing profile":               strings.Replace(valid, `"profile":"analytics","datasource":"mysql",`, "", 1),
+		"missing datasource":            strings.Replace(valid, `"datasource":"mysql",`, "", 1),
+		"empty datasource":              strings.Replace(valid, `"datasource":"mysql"`, `"datasource":""`, 1),
+		"null datasource":               strings.Replace(valid, `"datasource":"mysql"`, `"datasource":null`, 1),
+		"numeric datasource":            strings.Replace(valid, `"datasource":"mysql"`, `"datasource":1`, 1),
+		"case-folded datasource":        strings.Replace(valid, `"datasource"`, `"Datasource"`, 1),
+		"null query":                    `{"profile":"analytics","datasource":"mysql","query":null}`,
 		"case-folded key":               strings.Replace(valid, `"query"`, `"Query"`, 1),
 		"duplicate key":                 strings.Replace(valid, `"profile":"analytics"`, `"profile":"analytics","profile":"other"`, 1),
+		"duplicate datasource":          strings.Replace(valid, `"datasource":"mysql"`, `"datasource":"mysql","datasource":"other"`, 1),
 		"null optional filter":          strings.Replace(valid, `}}`, `,"filter":null}}`, 1),
-		"quoted grouped limit":          `{"profile":"analytics","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"dimension","field":"status"},{"kind":"measure","function":"count_all","alias":"total"}],"limit":"10"}}`,
+		"quoted grouped limit":          `{"profile":"analytics","datasource":"mysql","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"dimension","field":"status"},{"kind":"measure","function":"count_all","alias":"total"}],"limit":"10"}}`,
 		"scalar order":                  strings.Replace(valid, `}}`, `,"order_by":[]}}`, 1),
 		"branch-specific field":         strings.Replace(valid, `"alias":"total"`, `"field":"id","alias":"total"`, 1),
 		"empty projection":              strings.Replace(valid, `[{"kind":"measure","function":"count_all","alias":"total"}]`, `[]`, 1),
 		"duplicate projection output":   strings.Replace(valid, `[{"kind":"measure","function":"count_all","alias":"total"}]`, `[{"kind":"measure","function":"count_all","alias":"total"},{"kind":"measure","function":"count_all","alias":"total"}]`, 1),
-		"JSON-equal numeric duplicates": `{"profile":"analytics","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"group","operator":"and","expressions":[{"kind":"predicate","field":"id","operator":"eq","values":[{"type":"integer","value":1}]},{"kind":"predicate","field":"id","operator":"eq","values":[{"type":"integer","value":1.0}]}]}}}`,
+		"JSON-equal numeric duplicates": `{"profile":"analytics","datasource":"mysql","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"group","operator":"and","expressions":[{"kind":"predicate","field":"id","operator":"eq","values":[{"type":"integer","value":1}]},{"kind":"predicate","field":"id","operator":"eq","values":[{"type":"integer","value":1.0}]}]}}}`,
 	}
 	for name, body := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -106,7 +112,7 @@ func TestDecodeStrictAggregateRejectsTransportContractViolations(t *testing.T) {
 
 func TestAggregateTokenScanEnforcesHardFilterTotals(t *testing.T) {
 	thirdPredicate := `,{"kind":"predicate","field":"c","operator":"eq","values":[{"type":"integer","value":3}]}`
-	predicateBody := `{"profile":"analytics","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"group","operator":"and","expressions":[` +
+	predicateBody := `{"profile":"analytics","datasource":"mysql","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"group","operator":"and","expressions":[` +
 		`{"kind":"predicate","field":"a","operator":"eq","values":[{"type":"integer","value":1}]},` +
 		`{"kind":"predicate","field":"b","operator":"eq","values":[{"type":"integer","value":2}]}` +
 		thirdPredicate +
@@ -124,7 +130,7 @@ func TestAggregateTokenScanEnforcesHardFilterTotals(t *testing.T) {
 		t.Fatalf("DecodeStrictAggregate() predicate error = %v", err)
 	}
 
-	parameterBody := `{"profile":"analytics","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"predicate","field":"id","operator":"in","values":[` +
+	parameterBody := `{"profile":"analytics","datasource":"mysql","query":{"mode":"scalar","source":{"schema":"app","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"predicate","field":"id","operator":"in","values":[` +
 		`{"type":"integer","value":1},{"type":"integer","value":2},{"type":"integer","value":3}` +
 		`]}}}`
 	if err := scanAggregateRequestShape([]byte(parameterBody), 8, 10, 2); err == nil ||
@@ -136,7 +142,7 @@ func TestAggregateTokenScanEnforcesHardFilterTotals(t *testing.T) {
 		t.Fatalf("DecodeStrictAggregate() parameter error = %v", err)
 	}
 
-	groupedBody := `{"profile":"analytics","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"dimension","field":"status"},{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"predicate","field":"id","operator":"in","values":[{"type":"integer","value":1},{"type":"integer","value":2}]},"limit":10}}`
+	groupedBody := `{"profile":"analytics","datasource":"mysql","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"dimension","field":"status"},{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"predicate","field":"id","operator":"in","values":[{"type":"integer","value":1},{"type":"integer","value":2}]},"limit":10}}`
 	if err := scanAggregateRequestShape([]byte(groupedBody), 8, 10, 2); err == nil ||
 		!strings.Contains(err.Error(), "parameter limit") {
 		t.Fatalf("grouped server-parameter scan error = %v", err)

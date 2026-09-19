@@ -2,7 +2,7 @@
 openapi: 3.1.0
 info:
   title: Quordon Aggregate API Module
-  version: 1.5.0
+  version: 1.6.0
   description: >-
     Executable contract module for POST /queries/aggregate. The root service
     contract in openapi.yaml references this path and its schemas. This module
@@ -53,9 +53,6 @@ paths:
                 policy_version: "2"
                 profiles:
                   - name: analytics
-                    datasource: primary-mysql
-                    adapter: mysql8
-                    operations: [explain_select, aggregate, list_query_shapes]
                     limits:
                       deadline_ms: 3000
                       max_request_bytes: 65536
@@ -69,6 +66,10 @@ paths:
                       max_result_bytes: 1048576
                       max_offset: 0
                       max_concurrency: 2
+                    datasources:
+                      - name: primary-mysql
+                        adapter: mysql8
+                        operations: [explain_select, aggregate, list_query_shapes]
         "401":
           $ref: "./openapi.yaml#/components/responses/Unauthorized"
         "503":
@@ -299,6 +300,7 @@ paths:
                 summary: Count matching rows and find the latest timestamp
                 value:
                   profile: analytics
+                  datasource: primary-mysql
                   query:
                     mode: scalar
                     source:
@@ -321,6 +323,7 @@ paths:
                 summary: Count active employees by status
                 value:
                   profile: analytics
+                  datasource: primary-mysql
                   query:
                     mode: grouped
                     source:
@@ -445,11 +448,25 @@ components:
         advertised independently from select.
       type: object
       additionalProperties: false
-      required: [name, datasource, adapter, operations, limits]
+      required: [name, limits, datasources]
       properties:
         name:
           type: string
-        datasource:
+        limits:
+          $ref: "./openapi.yaml#/components/schemas/Limits"
+        datasources:
+          type: array
+          uniqueItems: true
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/DatasourceCapability"
+
+    DatasourceCapability:
+      type: object
+      additionalProperties: false
+      required: [name, adapter, operations]
+      properties:
+        name:
           type: string
         adapter:
           type: string
@@ -460,19 +477,20 @@ components:
           items:
             type: string
             enum: [list_objects, describe_object, describe_object_statistics, explain_select, select, select_keyset, aggregate, list_query_shapes]
-        limits:
-          $ref: "./openapi.yaml#/components/schemas/Limits"
 
     AggregateRequest:
       description: >-
         Request envelope selecting one assigned aggregate-enabled policy
-        profile. Missing profile, an empty profile, explicit null, and unknown
-        or case-folded members are invalid requests.
+        profile-datasource pair. Missing or empty identifiers, explicit null,
+        and unknown or case-folded members are invalid requests.
       type: object
       additionalProperties: false
-      required: [profile, query]
+      required: [profile, datasource, query]
       properties:
         profile:
+          type: string
+          minLength: 1
+        datasource:
           type: string
           minLength: 1
         query:

@@ -33,8 +33,7 @@ func TestAuthorizeAggregateMintsOperationBoundTokenForExactShape(t *testing.T) {
 		OrderBy: []queryspec.AggregateSort{{Kind: "measure", Alias: "TOTAL", Direction: "desc"}},
 		Limit:   &limit,
 	})
-	token, err := snapshot.AuthorizeAggregate(
-		"client", "analytics", validated,
+	token, err := snapshot.AuthorizeAggregate(bindingForTest(t, snapshot, "client", "analytics", "mysql", domain.OperationAggregate), validated,
 		domain.IdentifierSemantics{
 			CaseInsensitiveSchemas: true,
 			CaseInsensitiveObjects: true,
@@ -69,9 +68,9 @@ func TestAuthorizeAggregateBindsTimeBucketExecutionControls(t *testing.T) {
 	}
 	snapshot := NewSnapshot(config.Config{
 		Version: 1, HardLimits: limits,
-		Principals: map[string]config.Principal{"client": {Profiles: []string{"analytics"}}},
+		Principals: map[string]config.Principal{"client": {Profiles: []string{"analytics"}, Datasources: []string{"mysql"}}},
 		Profiles: map[string]config.Profile{"analytics": {
-			Datasource: "mysql", Operations: []domain.Operation{domain.OperationAggregate}, Limits: limits,
+			Datasources: []string{"mysql"}, Operations: []domain.Operation{domain.OperationAggregate}, Limits: limits,
 			Resources: config.ResourcePolicy{
 				Schemas: config.PatternPolicy{Allow: []string{"app"}},
 				Objects: config.PatternPolicy{Allow: []string{"app.orders"}},
@@ -102,7 +101,7 @@ func TestAuthorizeAggregateBindsTimeBucketExecutionControls(t *testing.T) {
 		},
 		OrderBy: []queryspec.AggregateSort{{Kind: "time_bucket", Alias: "created_day", Direction: "asc"}}, Limit: &limit,
 	})
-	token, err := snapshot.AuthorizeAggregate("client", "analytics", validated, domain.IdentifierSemantics{CaseInsensitiveFields: true})
+	token, err := snapshot.AuthorizeAggregate(bindingForTest(t, snapshot, "client", "analytics", "mysql", domain.OperationAggregate), validated, domain.IdentifierSemantics{CaseInsensitiveFields: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,9 +130,9 @@ func TestAuthorizeAggregateRejectsMissingTimeBucketExecutionControls(t *testing.
 	}
 	cfg := config.Config{
 		HardLimits: limits,
-		Principals: map[string]config.Principal{"client": {Profiles: []string{"analytics"}}},
+		Principals: map[string]config.Principal{"client": {Profiles: []string{"analytics"}, Datasources: []string{"mysql"}}},
 		Profiles: map[string]config.Profile{"analytics": {
-			Datasource: "mysql", Operations: []domain.Operation{domain.OperationAggregate}, Limits: limits,
+			Datasources: []string{"mysql"}, Operations: []domain.Operation{domain.OperationAggregate}, Limits: limits,
 			Resources: config.ResourcePolicy{
 				Schemas: config.PatternPolicy{Allow: []string{"app"}},
 				Objects: config.PatternPolicy{Allow: []string{"app.orders"}},
@@ -156,7 +155,8 @@ func TestAuthorizeAggregateRejectsMissingTimeBucketExecutionControls(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewSnapshot(cfg).AuthorizeAggregate("client", "analytics", validated, domain.IdentifierSemantics{}); err == nil {
+	candidate := NewSnapshot(cfg)
+	if _, err := candidate.AuthorizeAggregate(bindingForTest(t, candidate, "client", "analytics", "mysql", domain.OperationAggregate), validated, domain.IdentifierSemantics{}); err == nil {
 		t.Fatal("authorization token was minted without explicit time-bucket execution controls")
 	}
 }
@@ -171,9 +171,9 @@ func TestAuthorizeAggregateUsesSharedCanonicalFilterOrder(t *testing.T) {
 	stringType := []string{"string"}
 	snapshot := NewSnapshot(config.Config{
 		Version: 1, HardLimits: limits,
-		Principals: map[string]config.Principal{"client": {Profiles: []string{"analytics"}}},
+		Principals: map[string]config.Principal{"client": {Profiles: []string{"analytics"}, Datasources: []string{"mysql"}}},
 		Profiles: map[string]config.Profile{"analytics": {
-			Datasource: "mysql", Operations: []domain.Operation{domain.OperationAggregate}, Limits: limits,
+			Datasources: []string{"mysql"}, Operations: []domain.Operation{domain.OperationAggregate}, Limits: limits,
 			Resources: config.ResourcePolicy{
 				Schemas: config.PatternPolicy{Allow: []string{"app"}},
 				Objects: config.PatternPolicy{Allow: []string{"app.orders"}},
@@ -204,9 +204,7 @@ func TestAuthorizeAggregateUsesSharedCanonicalFilterOrder(t *testing.T) {
 		Projection: []queryspec.AggregateOutput{{Kind: "measure", Function: "count_all", Alias: "total"}},
 		Filter:     &filter,
 	})
-	if _, err := snapshot.AuthorizeAggregate(
-		"client", "analytics", validated, domain.IdentifierSemantics{CaseInsensitiveFields: true},
-	); err != nil {
+	if _, err := snapshot.AuthorizeAggregate(bindingForTest(t, snapshot, "client", "analytics", "mysql", domain.OperationAggregate), validated, domain.IdentifierSemantics{CaseInsensitiveFields: true}); err != nil {
 		t.Fatalf("AuthorizeAggregate() rejected an exact a/c shape: %v", err)
 	}
 }
@@ -214,9 +212,7 @@ func TestAuthorizeAggregateUsesSharedCanonicalFilterOrder(t *testing.T) {
 func TestAuthorizedAggregateQueryDeepCopiesBindPayloads(t *testing.T) {
 	snapshot := aggregatePolicySnapshot(10)
 	validated := validateAggregateForPolicy(t, aggregateRequestForPolicy(5))
-	token, err := snapshot.AuthorizeAggregate(
-		"client", "analytics", validated, domain.IdentifierSemantics{},
-	)
+	token, err := snapshot.AuthorizeAggregate(bindingForTest(t, snapshot, "client", "analytics", "mysql", domain.OperationAggregate), validated, domain.IdentifierSemantics{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +262,7 @@ func TestAuthorizeAggregateRejectsPartialOrExcessiveShape(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			validated := validateAggregateForPolicy(t, spec)
-			_, err := snapshot.AuthorizeAggregate("client", "analytics", validated, domain.IdentifierSemantics{})
+			_, err := snapshot.AuthorizeAggregate(bindingForTest(t, snapshot, "client", "analytics", "mysql", domain.OperationAggregate), validated, domain.IdentifierSemantics{})
 			var reason string
 			if !IsDenial(err, &reason) || reason != ReasonDeniedQueryFeature {
 				t.Fatalf("error = %v, reason = %q", err, reason)
@@ -286,9 +282,9 @@ func aggregatePolicySnapshot(maximumLimit int) *Snapshot {
 	valueTypesDatetime := []string{"datetime"}
 	return NewSnapshot(config.Config{
 		Version: 1, HardLimits: limits,
-		Principals: map[string]config.Principal{"client": {Profiles: []string{"analytics"}}},
+		Principals: map[string]config.Principal{"client": {Profiles: []string{"analytics"}, Datasources: []string{"mysql"}}},
 		Profiles: map[string]config.Profile{"analytics": {
-			Datasource: "mysql", Operations: []domain.Operation{domain.OperationAggregate}, Limits: limits,
+			Datasources: []string{"mysql"}, Operations: []domain.Operation{domain.OperationAggregate}, Limits: limits,
 			Resources: config.ResourcePolicy{
 				Schemas: config.PatternPolicy{Allow: []string{"app"}},
 				Objects: config.PatternPolicy{Allow: []string{"app.orders"}},

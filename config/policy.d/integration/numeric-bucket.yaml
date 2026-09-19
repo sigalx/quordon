@@ -1,5 +1,5 @@
 {
-  "datasource": "integration-mysql",
+  "datasources": ["integration-mysql"],
   "operations": [
     "aggregate",
     "list_query_shapes"
