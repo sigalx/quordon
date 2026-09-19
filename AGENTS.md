@@ -264,8 +264,11 @@ amplification внутри одного корректно аутентифиц�
 - `--check-config` выполняет сборку и общую validation без adapters, DB, HTTP и
   resolvers. Diagnostic — code и numeric locations/chain; raw errors, filenames,
   YAML keys/values и credentials не выводятся.
-- Fingerprint зависит от canonical redacted effective Config. Refs/overrides
-  сохраняют один datasource на profile. Генераторы shapes — отдельный backlog.
+- Fingerprint зависит от canonical redacted effective Config. После
+  полного раскрытия refs/overrides effective `Profile.datasources` может
+  содержать несколько datasource и проходит обычную проверку на
+  обязательность, уникальность, известные имена и общий лимит
+  bindings. Генераторы shapes — отдельный backlog.
 
 - Config decode отклоняет unknown fields, неверные типы, отсутствующие required
   fields и явный `null`, где он не разрешён.

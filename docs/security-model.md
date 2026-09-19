@@ -113,10 +113,18 @@ Quordon не позиционируется как публичный edge-се�
 
 - default decision — deny;
 - profile выбирается только из profiles назначенного principal;
-- profile связан с одним datasource;
+- datasource выбирается только из datasources назначенного principal;
+- profile содержит собственный datasource allowlist, и разрешена только пара
+  из пересечения двух назначений;
 - deny rules имеют приоритет над allow;
 - решение привязано к версии immutable policy snapshot;
-- capability проверяется только после аутентификации и проверки назначения profile.
+- capability проверяется только после аутентификации и проверки всей пары.
+
+Policy package сначала создаёт непрозрачный `AuthorizedBinding`, связанный с
+principal, profile, datasource, operation, effective limits и policy hash.
+Только после capability check и получения server identifier semantics из него
+создаётся более узкий operation token. Raw datasource из request дальше
+resolver не проходит.
 
 ### QuerySpec и SQL compilation
 
@@ -167,8 +175,8 @@ datasource, adapter и effective limits.
 типизированного aggregate или keyset request. SQL, bind/cursor values,
 credentials, DSN,
 `required_index`, plan estimate bounds и raw policy не раскрываются. Denial до
-token не пишет raw requested profile: audit сохраняет domain-separated SHA-256
-и byte length. Allow/completion записывают hash публичного shape set, количество
+token не пишет raw requested profile или datasource: audit сохраняет для обоих
+отдельные domain-separated SHA-256 и byte length. Allow/completion записывают hash публичного shape set, количество
 shapes, response bytes и разрешённые resources/fields, но не сериализованные
 shapes и descriptions. Имена resources/fields в audit канонизируются по
 проверенным identifier semantics datasource, сортируются и устраняют дубликаты;
@@ -441,15 +449,15 @@ policy-filtered payload. До policy-фильтрации adapter использ
 - allow/deny и reason code;
 - нормализованный hash `QuerySpec`, не содержащий значений параметров и сохраняемый также при ошибке выполнения;
 - нормализованный hash сохраняется и для resource/field/feature denial после
-  успешной валидации; ранний отказ неназначенного profile может не иметь hash;
+  успешной валидации; ранний отказ неназначенной пары может не иметь query hash;
 - completion с `CAPABILITY_NOT_IMPLEMENTED` после успешной валидации также
   сохраняет `query_shape_hash`, хотя не содержит неавторизованные resources;
 - разрешённые resources в виде пар schema/object и уникальный отсортированный
   список исходных fields;
 - allow decision и completion для `select_keyset` содержат имя разрешённого
-  публичного shape; при отказе неназначенного profile сырое имя из request не
-  записывается — аудит получает только domain-separated SHA-256 и длину в
-  UTF-8 bytes;
+  публичного shape; при отказе неназначенной пары сырые profile и datasource из
+  request не записываются — аудит получает отдельные domain-separated SHA-256
+  и длины в UTF-8 bytes;
 - длительность и размер JSON plan либо bounded row payload в `result_bytes` для
   успешного completion; SELECT, keyset и aggregate дополнительно записывают
   `row_count` и `truncated`, aggregate — mode и имя shape, keyset — имя shape и

@@ -71,7 +71,7 @@ query_shapes=$(curl --fail --silent --show-error \
   --dump-header "$query_shapes_headers" \
   --user integration-client:password \
   --header 'Accept: application/json' \
-  'http://127.0.0.1:18080/query-shapes?profile=analytics')
+  'http://127.0.0.1:18080/query-shapes?profile=analytics&datasource=integration-mysql')
 grep --ignore-case --quiet '^Cache-Control: no-store' "$query_shapes_headers"
 grep --ignore-case --quiet '^Vary: Accept' "$query_shapes_headers"
 grep --ignore-case --quiet '^Content-Type: application/json' "$query_shapes_headers"
@@ -90,7 +90,7 @@ fi
 for retired_media in application/vnd.quordon.query-shapes.v2+json application/vnd.quordon.query-shapes.v3+json; do
   retired_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
     --user integration-client:password --header "Accept: $retired_media" \
-    'http://127.0.0.1:18080/query-shapes?profile=analytics')
+    'http://127.0.0.1:18080/query-shapes?profile=analytics&datasource=integration-mysql')
   if [ "$retired_status" != "400" ]; then
     echo "Retired discovery media returned HTTP $retired_status instead of 400." >&2
     exit 1
@@ -99,13 +99,13 @@ done
 
 objects=$(curl --fail --silent --show-error \
   --user integration-client:password \
-  'http://127.0.0.1:18080/schemas/application/objects?profile=data-reader')
+  'http://127.0.0.1:18080/schemas/application/objects?profile=data-reader&datasource=integration-mysql')
 printf '%s\n' "$objects" | grep --quiet '"name":"orders"'
 printf '%s\n' "$objects" | grep --quiet '"name":"Orders"'
 
 bounded_objects=$(curl --fail --silent --show-error \
   --user integration-client:password \
-  'http://127.0.0.1:18080/schemas/application/objects?profile=metadata-reader')
+  'http://127.0.0.1:18080/schemas/application/objects?profile=metadata-reader&datasource=integration-mysql')
 printf '%s\n' "$bounded_objects" | grep --quiet '"objects":\[{"name":"orders"}\]'
 if printf '%s\n' "$bounded_objects" | grep --quiet 'hidden_metadata'; then
   echo 'Policy-hidden objects affected or entered the bounded metadata response.' >&2
@@ -114,7 +114,7 @@ fi
 
 description=$(curl --fail --silent --show-error \
   --user integration-client:password \
-  'http://127.0.0.1:18080/schemas/application/objects/orders?profile=data-reader')
+  'http://127.0.0.1:18080/schemas/application/objects/orders?profile=data-reader&datasource=integration-mysql')
 printf '%s\n' "$description" | grep --quiet '"name":"id","type":"integer"'
 printf '%s\n' "$description" | grep --quiet '"name":"status","type":"string"'
 printf '%s\n' "$description" | grep --quiet '"name":"location","type":"bytes"'
@@ -126,7 +126,7 @@ fi
 
 bounded_description=$(curl --fail --silent --show-error \
   --user integration-client:password \
-  'http://127.0.0.1:18080/schemas/application/objects/orders?profile=metadata-reader')
+  'http://127.0.0.1:18080/schemas/application/objects/orders?profile=metadata-reader&datasource=integration-mysql')
 printf '%s\n' "$bounded_description" | grep --quiet '"columns":\[{"name":"id"'
 if printf '%s\n' "$bounded_description" | grep --quiet 'legacy_text'; then
   echo 'Policy-hidden columns affected or entered the bounded metadata response.' >&2
@@ -135,7 +135,7 @@ fi
 
 view_description_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
   --user integration-client:password \
-  'http://127.0.0.1:18080/schemas/application/objects/Orders?profile=data-reader')
+  'http://127.0.0.1:18080/schemas/application/objects/Orders?profile=data-reader&datasource=integration-mysql')
 if [ "$view_description_status" != "200" ]; then
   echo "View description returned HTTP $view_description_status instead of 200." >&2
   exit 1
@@ -143,28 +143,28 @@ fi
 
 table_statistics=$(curl --fail --silent --show-error \
   --user integration-client:password \
-  'http://127.0.0.1:18080/schemas/application/objects/orders/statistics?profile=data-reader')
+  'http://127.0.0.1:18080/schemas/application/objects/orders/statistics?profile=data-reader&datasource=integration-mysql')
 printf '%s\n' "$table_statistics" | grep --quiet '"engine":"InnoDB"'
 printf '%s\n' "$table_statistics" | grep --quiet '"estimated_rows":{"value":"[0-9]*","estimated":true}'
 printf '%s\n' "$table_statistics" | grep --quiet '"partitioning":{"kind":"none"}'
 
 partitioned_statistics=$(curl --fail --silent --show-error \
   --user integration-client:password \
-  'http://127.0.0.1:18080/schemas/application/objects/partitioned_orders/statistics?profile=data-reader')
+  'http://127.0.0.1:18080/schemas/application/objects/partitioned_orders/statistics?profile=data-reader&datasource=integration-mysql')
 printf '%s\n' "$partitioned_statistics" | grep --quiet '"kind":"partitioned","method":"range"'
 printf '%s\n' "$partitioned_statistics" | grep --quiet '"name":"p_low","ordinal":1'
 printf '%s\n' "$partitioned_statistics" | grep --quiet '"name":"p_max","ordinal":2'
 
 subpartitioned_statistics=$(curl --fail --silent --show-error \
   --user integration-client:password \
-  'http://127.0.0.1:18080/schemas/application/objects/subpartitioned_events/statistics?profile=data-reader')
+  'http://127.0.0.1:18080/schemas/application/objects/subpartitioned_events/statistics?profile=data-reader&datasource=integration-mysql')
 printf '%s\n' "$subpartitioned_statistics" | grep --quiet '"kind":"subpartitioned","method":"range","subpartition_method":"hash"'
 printf '%s\n' "$subpartitioned_statistics" | grep --quiet '"subpartitions"'
 
 for unsupported_statistics_object in legacy_exact_rows; do
   unsupported_statistics_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
     --user integration-client:password \
-    "http://127.0.0.1:18080/schemas/application/objects/$unsupported_statistics_object/statistics?profile=data-reader")
+    "http://127.0.0.1:18080/schemas/application/objects/$unsupported_statistics_object/statistics?profile=data-reader&datasource=integration-mysql")
   if [ "$unsupported_statistics_status" != "404" ]; then
     echo "Statistics for $unsupported_statistics_object returned HTTP $unsupported_statistics_status instead of 404." >&2
     exit 1
@@ -174,7 +174,7 @@ done
 response=$(curl --fail --silent --show-error \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"profile":"query-explainer","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"},{"kind":"field","field":"status"}],"filter":{"kind":"predicate","field":"status","operator":"eq","values":[{"type":"string","value":"active"}]},"order_by":[{"field":"id","direction":"desc"}],"limit":10}}' \
+  --data '{"profile":"query-explainer","datasource":"integration-mysql","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"},{"kind":"field","field":"status"}],"filter":{"kind":"predicate","field":"status","operator":"eq","values":[{"type":"string","value":"active"}]},"order_by":[{"field":"id","direction":"desc"}],"limit":10}}' \
   http://127.0.0.1:18080/queries/explain)
 echo "$response" | grep --quiet '"format":"mysql_json"'
 echo "$response" | grep --quiet '"query_block"'
@@ -182,7 +182,7 @@ echo "$response" | grep --quiet '"query_block"'
 alias_response=$(curl --fail --silent --show-error \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"profile":"query-explainer","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"aggregate","function":"count","alias":"id"}],"group_by":["id"],"order_by":[{"field":"id","direction":"asc"}],"limit":10}}' \
+  --data '{"profile":"query-explainer","datasource":"integration-mysql","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"aggregate","function":"count","alias":"id"}],"group_by":["id"],"order_by":[{"field":"id","direction":"asc"}],"limit":10}}' \
   http://127.0.0.1:18080/queries/explain)
 echo "$alias_response" | grep --quiet '"format":"mysql_json"'
 echo "$alias_response" | grep --quiet '"query_block"'
@@ -190,7 +190,7 @@ echo "$alias_response" | grep --quiet '"query_block"'
 select_response=$(curl --fail --silent --show-error \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"profile":"data-reader","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"},{"kind":"field","field":"status"},{"kind":"field","field":"amount"}],"order_by":[{"field":"id","direction":"asc"}],"limit":1}}' \
+  --data '{"profile":"data-reader","datasource":"integration-mysql","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"},{"kind":"field","field":"status"},{"kind":"field","field":"amount"}],"order_by":[{"field":"id","direction":"asc"}],"limit":1}}' \
   http://127.0.0.1:18080/queries/select)
 printf '%s\n' "$select_response" | grep --quiet '"rows":\[\["1","active","10.00"\]\]'
 printf '%s\n' "$select_response" | grep --quiet '"name":"id","type":"integer","encoding":"string"'
@@ -200,7 +200,7 @@ printf '%s\n' "$select_response" | grep --quiet '"truncated":true'
 keyset_first_response=$(curl --fail --silent --show-error \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"kind":"keyset","profile":"analytics","shape":"orders_by_id","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"},{"kind":"field","field":"status"},{"kind":"field","field":"amount"}],"filter":{"kind":"group","operator":"and","expressions":[{"kind":"predicate","field":"amount","operator":"gte","values":[{"type":"decimal","value":1e1}]},{"kind":"predicate","field":"id","operator":"gte","values":[{"type":"integer","value":0}]}]},"order_by":[{"field":"id","direction":"asc"}],"limit":1},"page":{"kind":"first"}}' \
+  --data '{"kind":"keyset","profile":"analytics","datasource":"integration-mysql","shape":"orders_by_id","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"},{"kind":"field","field":"status"},{"kind":"field","field":"amount"}],"filter":{"kind":"group","operator":"and","expressions":[{"kind":"predicate","field":"amount","operator":"gte","values":[{"type":"decimal","value":1e1}]},{"kind":"predicate","field":"id","operator":"gte","values":[{"type":"integer","value":0}]}]},"order_by":[{"field":"id","direction":"asc"}],"limit":1},"page":{"kind":"first"}}' \
   http://127.0.0.1:18080/queries/select)
 printf '%s\n' "$keyset_first_response" | grep --quiet '"kind":"keyset"'
 printf '%s\n' "$keyset_first_response" | grep --quiet '"shape":"orders_by_id"'
@@ -211,7 +211,7 @@ printf '%s\n' "$keyset_first_response" | grep --quiet '"page":{"has_more":true,"
 keyset_after_response=$(curl --fail --silent --show-error \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"kind":"keyset","profile":"analytics","shape":"orders_by_id","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"},{"kind":"field","field":"status"},{"kind":"field","field":"amount"}],"filter":{"kind":"group","operator":"and","expressions":[{"kind":"predicate","field":"amount","operator":"gte","values":[{"type":"decimal","value":10.00}]},{"kind":"predicate","field":"id","operator":"gte","values":[{"type":"integer","value":0}]}]},"order_by":[{"field":"id","direction":"asc"}],"limit":1},"page":{"kind":"after","cursor":[{"type":"integer","value":"1"}]}}' \
+  --data '{"kind":"keyset","profile":"analytics","datasource":"integration-mysql","shape":"orders_by_id","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"},{"kind":"field","field":"status"},{"kind":"field","field":"amount"}],"filter":{"kind":"group","operator":"and","expressions":[{"kind":"predicate","field":"amount","operator":"gte","values":[{"type":"decimal","value":10.00}]},{"kind":"predicate","field":"id","operator":"gte","values":[{"type":"integer","value":0}]}]},"order_by":[{"field":"id","direction":"asc"}],"limit":1},"page":{"kind":"after","cursor":[{"type":"integer","value":"1"}]}}' \
   http://127.0.0.1:18080/queries/select)
 printf '%s\n' "$keyset_after_response" | grep --quiet '"rows":\[\["2","closed","20.00"\]\]'
 printf '%s\n' "$keyset_after_response" | grep --quiet '"truncated":false'
@@ -224,7 +224,7 @@ fi
 keyset_decimal_overflow_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"kind":"keyset","profile":"analytics","shape":"orders_by_id","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"},{"kind":"field","field":"status"},{"kind":"field","field":"amount"}],"filter":{"kind":"group","operator":"and","expressions":[{"kind":"predicate","field":"amount","operator":"gte","values":[{"type":"decimal","value":10.001}]},{"kind":"predicate","field":"id","operator":"gte","values":[{"type":"integer","value":0}]}]},"order_by":[{"field":"id","direction":"asc"}],"limit":1},"page":{"kind":"first"}}' \
+  --data '{"kind":"keyset","profile":"analytics","datasource":"integration-mysql","shape":"orders_by_id","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"},{"kind":"field","field":"status"},{"kind":"field","field":"amount"}],"filter":{"kind":"group","operator":"and","expressions":[{"kind":"predicate","field":"amount","operator":"gte","values":[{"type":"decimal","value":10.001}]},{"kind":"predicate","field":"id","operator":"gte","values":[{"type":"integer","value":0}]}]},"order_by":[{"field":"id","direction":"asc"}],"limit":1},"page":{"kind":"first"}}' \
   http://127.0.0.1:18080/queries/select)
 if [ "$keyset_decimal_overflow_status" != "422" ]; then
   echo "Out-of-scale keyset decimal returned HTTP $keyset_decimal_overflow_status instead of 422." >&2
@@ -234,7 +234,7 @@ fi
 keyset_unsigned_negative_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"kind":"keyset","profile":"analytics","shape":"orders_by_id","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"},{"kind":"field","field":"status"},{"kind":"field","field":"amount"}],"filter":{"kind":"group","operator":"and","expressions":[{"kind":"predicate","field":"amount","operator":"gte","values":[{"type":"decimal","value":10}]},{"kind":"predicate","field":"id","operator":"gte","values":[{"type":"integer","value":-1}]}]},"order_by":[{"field":"id","direction":"asc"}],"limit":1},"page":{"kind":"first"}}' \
+  --data '{"kind":"keyset","profile":"analytics","datasource":"integration-mysql","shape":"orders_by_id","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"},{"kind":"field","field":"status"},{"kind":"field","field":"amount"}],"filter":{"kind":"group","operator":"and","expressions":[{"kind":"predicate","field":"amount","operator":"gte","values":[{"type":"decimal","value":10}]},{"kind":"predicate","field":"id","operator":"gte","values":[{"type":"integer","value":-1}]}]},"order_by":[{"field":"id","direction":"asc"}],"limit":1},"page":{"kind":"first"}}' \
   http://127.0.0.1:18080/queries/select)
 if [ "$keyset_unsigned_negative_status" != "422" ]; then
   echo "Negative filter for an unsigned keyset column returned HTTP $keyset_unsigned_negative_status instead of 422." >&2
@@ -246,7 +246,7 @@ sh ./scripts/integration-keyset-characters.sh
 date_keyset_first=$(curl --fail --silent --show-error \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"kind":"keyset","profile":"analytics","shape":"temporal_events_by_date","query":{"source":{"schema":"application","name":"temporal_events"},"projection":[{"kind":"field","field":"event_date"},{"kind":"field","field":"id"},{"kind":"field","field":"label"}],"order_by":[{"field":"event_date","direction":"asc"},{"field":"id","direction":"asc"}],"limit":1},"page":{"kind":"first"}}' \
+  --data '{"kind":"keyset","profile":"analytics","datasource":"integration-mysql","shape":"temporal_events_by_date","query":{"source":{"schema":"application","name":"temporal_events"},"projection":[{"kind":"field","field":"event_date"},{"kind":"field","field":"id"},{"kind":"field","field":"label"}],"order_by":[{"field":"event_date","direction":"asc"},{"field":"id","direction":"asc"}],"limit":1},"page":{"kind":"first"}}' \
   http://127.0.0.1:18080/queries/select)
 printf '%s\n' "$date_keyset_first" | grep --quiet '"rows":\[\["2026-09-14","1","first"\]\]'
 printf '%s\n' "$date_keyset_first" | grep --quiet '"next_cursor":\[{"type":"date","value":"2026-09-14"},{"type":"integer","value":"1"}\]'
@@ -254,7 +254,7 @@ printf '%s\n' "$date_keyset_first" | grep --quiet '"next_cursor":\[{"type":"date
 date_keyset_second=$(curl --fail --silent --show-error \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"kind":"keyset","profile":"analytics","shape":"temporal_events_by_date","query":{"source":{"schema":"application","name":"temporal_events"},"projection":[{"kind":"field","field":"event_date"},{"kind":"field","field":"id"},{"kind":"field","field":"label"}],"order_by":[{"field":"event_date","direction":"asc"},{"field":"id","direction":"asc"}],"limit":1},"page":{"kind":"after","cursor":[{"type":"date","value":"2026-09-14"},{"type":"integer","value":"1"}]}}' \
+  --data '{"kind":"keyset","profile":"analytics","datasource":"integration-mysql","shape":"temporal_events_by_date","query":{"source":{"schema":"application","name":"temporal_events"},"projection":[{"kind":"field","field":"event_date"},{"kind":"field","field":"id"},{"kind":"field","field":"label"}],"order_by":[{"field":"event_date","direction":"asc"},{"field":"id","direction":"asc"}],"limit":1},"page":{"kind":"after","cursor":[{"type":"date","value":"2026-09-14"},{"type":"integer","value":"1"}]}}' \
   http://127.0.0.1:18080/queries/select)
 printf '%s\n' "$date_keyset_second" | grep --quiet '"rows":\[\["2026-09-15","2","second"\]\]'
 printf '%s\n' "$date_keyset_second" | grep --quiet '"next_cursor":\[{"type":"date","value":"2026-09-15"},{"type":"integer","value":"2"}\]'
@@ -262,7 +262,7 @@ printf '%s\n' "$date_keyset_second" | grep --quiet '"next_cursor":\[{"type":"dat
 date_keyset_final=$(curl --fail --silent --show-error \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"kind":"keyset","profile":"analytics","shape":"temporal_events_by_date","query":{"source":{"schema":"application","name":"temporal_events"},"projection":[{"kind":"field","field":"event_date"},{"kind":"field","field":"id"},{"kind":"field","field":"label"}],"order_by":[{"field":"event_date","direction":"asc"},{"field":"id","direction":"asc"}],"limit":1},"page":{"kind":"after","cursor":[{"type":"date","value":"2026-09-15"},{"type":"integer","value":"2"}]}}' \
+  --data '{"kind":"keyset","profile":"analytics","datasource":"integration-mysql","shape":"temporal_events_by_date","query":{"source":{"schema":"application","name":"temporal_events"},"projection":[{"kind":"field","field":"event_date"},{"kind":"field","field":"id"},{"kind":"field","field":"label"}],"order_by":[{"field":"event_date","direction":"asc"},{"field":"id","direction":"asc"}],"limit":1},"page":{"kind":"after","cursor":[{"type":"date","value":"2026-09-15"},{"type":"integer","value":"2"}]}}' \
   http://127.0.0.1:18080/queries/select)
 printf '%s\n' "$date_keyset_final" | grep --quiet '"rows":\[\["2026-09-15","3","third"\]\]'
 printf '%s\n' "$date_keyset_final" | grep --quiet '"page":{"has_more":false}'
@@ -270,7 +270,7 @@ printf '%s\n' "$date_keyset_final" | grep --quiet '"page":{"has_more":false}'
 datetime_keyset_first=$(curl --fail --silent --show-error \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"kind":"keyset","profile":"analytics","shape":"temporal_events_by_datetime","query":{"source":{"schema":"application","name":"temporal_events"},"projection":[{"kind":"field","field":"wall_time"},{"kind":"field","field":"id"},{"kind":"field","field":"label"}],"order_by":[{"field":"wall_time","direction":"desc"},{"field":"id","direction":"desc"}],"limit":1},"page":{"kind":"first"}}' \
+  --data '{"kind":"keyset","profile":"analytics","datasource":"integration-mysql","shape":"temporal_events_by_datetime","query":{"source":{"schema":"application","name":"temporal_events"},"projection":[{"kind":"field","field":"wall_time"},{"kind":"field","field":"id"},{"kind":"field","field":"label"}],"order_by":[{"field":"wall_time","direction":"desc"},{"field":"id","direction":"desc"}],"limit":1},"page":{"kind":"first"}}' \
   http://127.0.0.1:18080/queries/select)
 printf '%s\n' "$datetime_keyset_first" | grep --quiet '"rows":\[\["2026-09-15 12:34:56.123456","3","third"\]\]'
 printf '%s\n' "$datetime_keyset_first" | grep --quiet '"next_cursor":\[{"type":"datetime","value":"2026-09-15 12:34:56.123456"},{"type":"integer","value":"3"}\]'
@@ -278,14 +278,14 @@ printf '%s\n' "$datetime_keyset_first" | grep --quiet '"next_cursor":\[{"type":"
 datetime_keyset_second=$(curl --fail --silent --show-error \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"kind":"keyset","profile":"analytics","shape":"temporal_events_by_datetime","query":{"source":{"schema":"application","name":"temporal_events"},"projection":[{"kind":"field","field":"wall_time"},{"kind":"field","field":"id"},{"kind":"field","field":"label"}],"order_by":[{"field":"wall_time","direction":"desc"},{"field":"id","direction":"desc"}],"limit":1},"page":{"kind":"after","cursor":[{"type":"datetime","value":"2026-09-15 12:34:56.123456"},{"type":"integer","value":"3"}]}}' \
+  --data '{"kind":"keyset","profile":"analytics","datasource":"integration-mysql","shape":"temporal_events_by_datetime","query":{"source":{"schema":"application","name":"temporal_events"},"projection":[{"kind":"field","field":"wall_time"},{"kind":"field","field":"id"},{"kind":"field","field":"label"}],"order_by":[{"field":"wall_time","direction":"desc"},{"field":"id","direction":"desc"}],"limit":1},"page":{"kind":"after","cursor":[{"type":"datetime","value":"2026-09-15 12:34:56.123456"},{"type":"integer","value":"3"}]}}' \
   http://127.0.0.1:18080/queries/select)
 printf '%s\n' "$datetime_keyset_second" | grep --quiet '"rows":\[\["2026-09-15 12:34:56.123455","2","second"\]\]'
 
 timestamp_keyset_first=$(curl --fail --silent --show-error \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"kind":"keyset","profile":"analytics","shape":"temporal_events_by_timestamp","query":{"source":{"schema":"application","name":"temporal_events"},"projection":[{"kind":"field","field":"occurred_at"},{"kind":"field","field":"token"},{"kind":"field","field":"id"}],"order_by":[{"field":"occurred_at","direction":"asc"},{"field":"token","direction":"asc"}],"limit":1},"page":{"kind":"first"}}' \
+  --data '{"kind":"keyset","profile":"analytics","datasource":"integration-mysql","shape":"temporal_events_by_timestamp","query":{"source":{"schema":"application","name":"temporal_events"},"projection":[{"kind":"field","field":"occurred_at"},{"kind":"field","field":"token"},{"kind":"field","field":"id"}],"order_by":[{"field":"occurred_at","direction":"asc"},{"field":"token","direction":"asc"}],"limit":1},"page":{"kind":"first"}}' \
   http://127.0.0.1:18080/queries/select)
 printf '%s\n' "$timestamp_keyset_first" | grep --quiet '"rows":\[\["2026-09-14 07:00:00.000001","AAE=","1"\]\]'
 printf '%s\n' "$timestamp_keyset_first" | grep --quiet '"next_cursor":\[{"type":"timestamp","value":"2026-09-14T07:00:00.000001Z"},{"type":"bytes","value":"AAE="}\]'
@@ -293,7 +293,7 @@ printf '%s\n' "$timestamp_keyset_first" | grep --quiet '"next_cursor":\[{"type":
 timestamp_keyset_second=$(curl --fail --silent --show-error \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"kind":"keyset","profile":"analytics","shape":"temporal_events_by_timestamp","query":{"source":{"schema":"application","name":"temporal_events"},"projection":[{"kind":"field","field":"occurred_at"},{"kind":"field","field":"token"},{"kind":"field","field":"id"}],"order_by":[{"field":"occurred_at","direction":"asc"},{"field":"token","direction":"asc"}],"limit":1},"page":{"kind":"after","cursor":[{"type":"timestamp","value":"2026-09-14T07:00:00.000001Z"},{"type":"bytes","value":"AAE="}]}}' \
+  --data '{"kind":"keyset","profile":"analytics","datasource":"integration-mysql","shape":"temporal_events_by_timestamp","query":{"source":{"schema":"application","name":"temporal_events"},"projection":[{"kind":"field","field":"occurred_at"},{"kind":"field","field":"token"},{"kind":"field","field":"id"}],"order_by":[{"field":"occurred_at","direction":"asc"},{"field":"token","direction":"asc"}],"limit":1},"page":{"kind":"after","cursor":[{"type":"timestamp","value":"2026-09-14T07:00:00.000001Z"},{"type":"bytes","value":"AAE="}]}}' \
   http://127.0.0.1:18080/queries/select)
 printf '%s\n' "$timestamp_keyset_second" | grep --quiet '"rows":\[\["2026-09-15 09:34:56.123455","AAI=","2"\]\]'
 printf '%s\n' "$timestamp_keyset_second" | grep --quiet '"next_cursor":\[{"type":"timestamp","value":"2026-09-15T09:34:56.123455Z"},{"type":"bytes","value":"AAI="}\]'
@@ -301,7 +301,7 @@ printf '%s\n' "$timestamp_keyset_second" | grep --quiet '"next_cursor":\[{"type"
 malformed_timestamp_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"kind":"keyset","profile":"analytics","shape":"temporal_events_by_timestamp","query":{"source":{"schema":"application","name":"temporal_events"},"projection":[{"kind":"field","field":"occurred_at"},{"kind":"field","field":"token"},{"kind":"field","field":"id"}],"order_by":[{"field":"occurred_at","direction":"asc"},{"field":"token","direction":"asc"}],"limit":1},"page":{"kind":"after","cursor":[{"type":"timestamp","value":"2026-09-14T07:00:00.000001+00:00"},{"type":"bytes","value":"AAE="}]}}' \
+  --data '{"kind":"keyset","profile":"analytics","datasource":"integration-mysql","shape":"temporal_events_by_timestamp","query":{"source":{"schema":"application","name":"temporal_events"},"projection":[{"kind":"field","field":"occurred_at"},{"kind":"field","field":"token"},{"kind":"field","field":"id"}],"order_by":[{"field":"occurred_at","direction":"asc"},{"field":"token","direction":"asc"}],"limit":1},"page":{"kind":"after","cursor":[{"type":"timestamp","value":"2026-09-14T07:00:00.000001+00:00"},{"type":"bytes","value":"AAE="}]}}' \
   http://127.0.0.1:18080/queries/select)
 if [ "$malformed_timestamp_status" != "400" ]; then
   echo "Malformed timestamp cursor returned HTTP $malformed_timestamp_status instead of 400." >&2
@@ -311,7 +311,7 @@ fi
 mysql_timestamp_precision_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"kind":"keyset","profile":"analytics","shape":"temporal_events_by_timestamp","query":{"source":{"schema":"application","name":"temporal_events"},"projection":[{"kind":"field","field":"occurred_at"},{"kind":"field","field":"token"},{"kind":"field","field":"id"}],"order_by":[{"field":"occurred_at","direction":"asc"},{"field":"token","direction":"asc"}],"limit":1},"page":{"kind":"after","cursor":[{"type":"timestamp","value":"2026-09-14T07:00:00.0000010Z"},{"type":"bytes","value":"AAE="}]}}' \
+  --data '{"kind":"keyset","profile":"analytics","datasource":"integration-mysql","shape":"temporal_events_by_timestamp","query":{"source":{"schema":"application","name":"temporal_events"},"projection":[{"kind":"field","field":"occurred_at"},{"kind":"field","field":"token"},{"kind":"field","field":"id"}],"order_by":[{"field":"occurred_at","direction":"asc"},{"field":"token","direction":"asc"}],"limit":1},"page":{"kind":"after","cursor":[{"type":"timestamp","value":"2026-09-14T07:00:00.0000010Z"},{"type":"bytes","value":"AAE="}]}}' \
   http://127.0.0.1:18080/queries/select)
 if [ "$mysql_timestamp_precision_status" != "422" ]; then
   echo "Timestamp cursor above MySQL FSP returned HTTP $mysql_timestamp_precision_status instead of 422." >&2
@@ -321,7 +321,7 @@ fi
 mysql_timestamp_type_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"kind":"keyset","profile":"analytics","shape":"temporal_events_by_timestamp","query":{"source":{"schema":"application","name":"temporal_events"},"projection":[{"kind":"field","field":"occurred_at"},{"kind":"field","field":"token"},{"kind":"field","field":"id"}],"order_by":[{"field":"occurred_at","direction":"asc"},{"field":"token","direction":"asc"}],"limit":1},"page":{"kind":"after","cursor":[{"type":"datetime","value":"2026-09-14 07:00:00.000001"},{"type":"bytes","value":"AAE="}]}}' \
+  --data '{"kind":"keyset","profile":"analytics","datasource":"integration-mysql","shape":"temporal_events_by_timestamp","query":{"source":{"schema":"application","name":"temporal_events"},"projection":[{"kind":"field","field":"occurred_at"},{"kind":"field","field":"token"},{"kind":"field","field":"id"}],"order_by":[{"field":"occurred_at","direction":"asc"},{"field":"token","direction":"asc"}],"limit":1},"page":{"kind":"after","cursor":[{"type":"datetime","value":"2026-09-14 07:00:00.000001"},{"type":"bytes","value":"AAE="}]}}' \
   http://127.0.0.1:18080/queries/select)
 if [ "$mysql_timestamp_type_status" != "422" ]; then
   echo "Wrong cursor type for MySQL TIMESTAMP returned HTTP $mysql_timestamp_type_status instead of 422." >&2
@@ -331,7 +331,7 @@ fi
 integral_number_response=$(curl --fail --silent --show-error \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"profile":"data-reader","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"id","operator":"eq","values":[{"type":"integer","value":1e0}]},"limit":1.0,"offset":0e2}}' \
+  --data '{"profile":"data-reader","datasource":"integration-mysql","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"id","operator":"eq","values":[{"type":"integer","value":1e0}]},"limit":1.0,"offset":0e2}}' \
   http://127.0.0.1:18080/queries/select)
 printf '%s\n' "$integral_number_response" | grep --quiet '"rows":\[\["1"\]\]'
 printf '%s\n' "$integral_number_response" | grep --quiet '"row_count":1'
@@ -339,7 +339,7 @@ printf '%s\n' "$integral_number_response" | grep --quiet '"row_count":1'
 temporal_response=$(curl --fail --silent --show-error \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"profile":"data-reader","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"created_at"}],"order_by":[{"field":"id","direction":"asc"}],"limit":1}}' \
+  --data '{"profile":"data-reader","datasource":"integration-mysql","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"created_at"}],"order_by":[{"field":"id","direction":"asc"}],"limit":1}}' \
   http://127.0.0.1:18080/queries/select)
 printf '%s\n' "$temporal_response" | grep --quiet '"name":"created_at","type":"datetime","encoding":"string"'
 printf '%s\n' "$temporal_response" | grep --quiet '"rows":\[\["2026-08-15 10:00:00"\]\]'
@@ -347,7 +347,7 @@ printf '%s\n' "$temporal_response" | grep --quiet '"rows":\[\["2026-08-15 10:00:
 text_response=$(curl --fail --silent --show-error \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"profile":"data-reader","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"legacy_text"}],"order_by":[{"field":"id","direction":"asc"}],"limit":1}}' \
+  --data '{"profile":"data-reader","datasource":"integration-mysql","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"legacy_text"}],"order_by":[{"field":"id","direction":"asc"}],"limit":1}}' \
   http://127.0.0.1:18080/queries/select)
 printf '%s\n' "$text_response" | grep --quiet '"name":"legacy_text","type":"string","encoding":"string"'
 printf '%s\n' "$text_response" | grep --quiet '"rows":\[\["café"\]\]'
@@ -355,14 +355,14 @@ printf '%s\n' "$text_response" | grep --quiet '"rows":\[\["café"\]\]'
 spatial_response=$(curl --fail --silent --show-error \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"profile":"data-reader","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"location"}],"order_by":[{"field":"id","direction":"asc"}],"limit":1}}' \
+  --data '{"profile":"data-reader","datasource":"integration-mysql","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"location"}],"order_by":[{"field":"id","direction":"asc"}],"limit":1}}' \
   http://127.0.0.1:18080/queries/select)
 printf '%s\n' "$spatial_response" | grep --quiet '"name":"location","type":"bytes","encoding":"base64"'
 
 byte_truncated_response=$(curl --fail --silent --show-error \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"profile":"data-reader","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"payload"}],"order_by":[{"field":"id","direction":"asc"}],"limit":10}}' \
+  --data '{"profile":"data-reader","datasource":"integration-mysql","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"payload"}],"order_by":[{"field":"id","direction":"asc"}],"limit":10}}' \
   http://127.0.0.1:18080/queries/select)
 printf '%s\n' "$byte_truncated_response" | grep --quiet '"rows":\[\["small"\]\]'
 printf '%s\n' "$byte_truncated_response" | grep --quiet '"row_count":1'
@@ -371,7 +371,7 @@ printf '%s\n' "$byte_truncated_response" | grep --quiet '"truncated":true'
 first_row_truncated_response=$(curl --fail --silent --show-error \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"profile":"data-reader","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"payload"}],"order_by":[{"field":"id","direction":"desc"}],"limit":10}}' \
+  --data '{"profile":"data-reader","datasource":"integration-mysql","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"payload"}],"order_by":[{"field":"id","direction":"desc"}],"limit":10}}' \
   http://127.0.0.1:18080/queries/select)
 printf '%s\n' "$first_row_truncated_response" | grep --quiet '"rows":\[\]'
 printf '%s\n' "$first_row_truncated_response" | grep --quiet '"row_count":0'
@@ -380,7 +380,7 @@ printf '%s\n' "$first_row_truncated_response" | grep --quiet '"truncated":true'
 grouped_aggregate_response=$(curl --fail --silent --show-error \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"profile":"analytics","query":{"mode":"grouped","source":{"schema":"application","name":"orders"},"projection":[{"kind":"dimension","field":"status"},{"kind":"measure","function":"count_all","alias":"orders_count"},{"kind":"measure","function":"sum","field":"amount","alias":"amount_sum"}],"limit":20}}' \
+  --data '{"profile":"analytics","datasource":"integration-mysql","query":{"mode":"grouped","source":{"schema":"application","name":"orders"},"projection":[{"kind":"dimension","field":"status"},{"kind":"measure","function":"count_all","alias":"orders_count"},{"kind":"measure","function":"sum","field":"amount","alias":"amount_sum"}],"limit":20}}' \
   http://127.0.0.1:18080/queries/aggregate)
 printf '%s\n' "$grouped_aggregate_response" | grep --quiet '"mode":"grouped"'
 printf '%s\n' "$grouped_aggregate_response" | grep --quiet '\["active","1","10.00"\]'
@@ -393,7 +393,7 @@ printf '%s\n' "$grouped_aggregate_response" | grep --quiet '"truncated":false'
 time_bucket_response=$(curl --fail --silent --show-error \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"profile":"analytics","query":{"mode":"grouped","source":{"schema":"application","name":"orders"},"projection":[{"kind":"time_bucket","field":"created_at","unit":"day","timezone":"UTC","alias":"created_day"},{"kind":"measure","function":"count_all","alias":"orders_count"}],"order_by":[{"kind":"time_bucket","alias":"created_day","direction":"asc"}],"limit":20}}' \
+  --data '{"profile":"analytics","datasource":"integration-mysql","query":{"mode":"grouped","source":{"schema":"application","name":"orders"},"projection":[{"kind":"time_bucket","field":"created_at","unit":"day","timezone":"UTC","alias":"created_day"},{"kind":"measure","function":"count_all","alias":"orders_count"}],"order_by":[{"kind":"time_bucket","alias":"created_day","direction":"asc"}],"limit":20}}' \
   http://127.0.0.1:18080/queries/aggregate)
 printf '%s\n' "$time_bucket_response" | grep --quiet '"mode":"grouped"'
 printf '%s\n' "$time_bucket_response" | grep --quiet '"name":"created_day","type":"datetime","encoding":"string","nullable":false'
@@ -403,7 +403,7 @@ printf '%s\n' "$time_bucket_response" | grep --quiet '"row_count":1'
 scalar_aggregate_response=$(curl --fail --silent --show-error \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"profile":"analytics","query":{"mode":"scalar","source":{"schema":"application","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"orders_count"},{"kind":"measure","function":"max","field":"created_at","alias":"latest_created_at"}],"filter":{"kind":"predicate","field":"status","operator":"eq","values":[{"type":"string","value":"active"}]}}}' \
+  --data '{"profile":"analytics","datasource":"integration-mysql","query":{"mode":"scalar","source":{"schema":"application","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"orders_count"},{"kind":"measure","function":"max","field":"created_at","alias":"latest_created_at"}],"filter":{"kind":"predicate","field":"status","operator":"eq","values":[{"type":"string","value":"active"}]}}}' \
   http://127.0.0.1:18080/queries/aggregate)
 printf '%s\n' "$scalar_aggregate_response" | grep --quiet '"mode":"scalar"'
 printf '%s\n' "$scalar_aggregate_response" | grep --quiet '"rows":\[\["1","2026-08-15 10:00:00"\]\]'
@@ -413,7 +413,7 @@ printf '%s\n' "$scalar_aggregate_response" | grep --quiet '"truncated":false'
 empty_scalar_aggregate_response=$(curl --fail --silent --show-error \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"profile":"analytics","query":{"mode":"scalar","source":{"schema":"application","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"missing_orders_count"},{"kind":"measure","function":"max","field":"created_at","alias":"latest_missing_created_at"}],"filter":{"kind":"predicate","field":"id","operator":"eq","values":[{"type":"integer","value":999}]}}}' \
+  --data '{"profile":"analytics","datasource":"integration-mysql","query":{"mode":"scalar","source":{"schema":"application","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"missing_orders_count"},{"kind":"measure","function":"max","field":"created_at","alias":"latest_missing_created_at"}],"filter":{"kind":"predicate","field":"id","operator":"eq","values":[{"type":"integer","value":999}]}}}' \
   http://127.0.0.1:18080/queries/aggregate)
 printf '%s\n' "$empty_scalar_aggregate_response" | grep --quiet '"mode":"scalar"'
 printf '%s\n' "$empty_scalar_aggregate_response" | grep --quiet '"rows":\[\["0",null\]\]'
@@ -425,7 +425,7 @@ printf '%s\n' "$empty_scalar_aggregate_response" | grep --quiet '"truncated":fal
 unmatched_aggregate_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"profile":"analytics","query":{"mode":"grouped","source":{"schema":"application","name":"orders"},"projection":[{"kind":"dimension","field":"status"},{"kind":"measure","function":"count_all","alias":"orders_count"}],"order_by":[{"kind":"dimension","field":"status","direction":"asc"}],"limit":20}}' \
+  --data '{"profile":"analytics","datasource":"integration-mysql","query":{"mode":"grouped","source":{"schema":"application","name":"orders"},"projection":[{"kind":"dimension","field":"status"},{"kind":"measure","function":"count_all","alias":"orders_count"}],"order_by":[{"kind":"dimension","field":"status","direction":"asc"}],"limit":20}}' \
   http://127.0.0.1:18080/queries/aggregate)
 if [ "$unmatched_aggregate_status" != "403" ]; then
   echo "Unmatched aggregate shape returned HTTP $unmatched_aggregate_status instead of 403." >&2
@@ -435,7 +435,7 @@ fi
 invisible_index_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"profile":"analytics","query":{"mode":"scalar","source":{"schema":"application","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"invisible_index_count"}],"filter":{"kind":"predicate","field":"status","operator":"eq","values":[{"type":"string","value":"active"}]}}}' \
+  --data '{"profile":"analytics","datasource":"integration-mysql","query":{"mode":"scalar","source":{"schema":"application","name":"orders"},"projection":[{"kind":"measure","function":"count_all","alias":"invisible_index_count"}],"filter":{"kind":"predicate","field":"status","operator":"eq","values":[{"type":"string","value":"active"}]}}}' \
   http://127.0.0.1:18080/queries/aggregate)
 if [ "$invisible_index_status" != "422" ]; then
   echo "Aggregate requiring an invisible index returned HTTP $invisible_index_status instead of 422." >&2
@@ -445,7 +445,7 @@ fi
 aggregate_select_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"profile":"data-reader","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"aggregate","function":"count"}],"limit":10}}' \
+  --data '{"profile":"data-reader","datasource":"integration-mysql","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"aggregate","function":"count"}],"limit":10}}' \
   http://127.0.0.1:18080/queries/select)
 if [ "$aggregate_select_status" != "400" ]; then
 	echo "Aggregate SELECT returned HTTP $aggregate_select_status instead of 400." >&2
@@ -455,7 +455,7 @@ fi
 empty_group_select_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"profile":"data-reader","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"}],"group_by":[]}}' \
+  --data '{"profile":"data-reader","datasource":"integration-mysql","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"}],"group_by":[]}}' \
   http://127.0.0.1:18080/queries/select)
 if [ "$empty_group_select_status" != "400" ]; then
 	echo "SELECT with explicit group_by returned HTTP $empty_group_select_status instead of 400." >&2
@@ -465,7 +465,7 @@ fi
 select_view_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"profile":"data-reader","query":{"source":{"schema":"application","name":"Orders"},"projection":[{"kind":"field","field":"id"}],"limit":10}}' \
+  --data '{"profile":"data-reader","datasource":"integration-mysql","query":{"source":{"schema":"application","name":"Orders"},"projection":[{"kind":"field","field":"id"}],"limit":10}}' \
   http://127.0.0.1:18080/queries/select)
 if [ "$select_view_status" != "200" ]; then
 	echo "SELECT over a view returned HTTP $select_view_status instead of 200." >&2
@@ -475,7 +475,7 @@ fi
 view_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"profile":"query-explainer","query":{"source":{"schema":"application","name":"Orders"},"projection":[{"kind":"field","field":"id"}],"limit":10}}' \
+  --data '{"profile":"query-explainer","datasource":"integration-mysql","query":{"source":{"schema":"application","name":"Orders"},"projection":[{"kind":"field","field":"id"}],"limit":10}}' \
   http://127.0.0.1:18080/queries/explain)
 if [ "$view_status" != "503" ]; then
   echo "SELECT-only EXPLAIN over a view returned HTTP $view_status instead of 503." >&2
@@ -485,7 +485,7 @@ fi
 missing_column_status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
   --user integration-client:password \
   --header 'Content-Type: application/json' \
-  --data '{"profile":"query-explainer","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"missing_column"}],"limit":10}}' \
+  --data '{"profile":"query-explainer","datasource":"integration-mysql","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"missing_column"}],"limit":10}}' \
   http://127.0.0.1:18080/queries/explain)
 if [ "$missing_column_status" != "422" ]; then
   echo "EXPLAIN with a missing column returned HTTP $missing_column_status instead of 422." >&2

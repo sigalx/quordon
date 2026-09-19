@@ -68,7 +68,7 @@ def pages(source, keys, fields, shape, profile="admission-reader", status=200, d
     spec["limit"] = 1
     spec["order_by"] = [{"field": key, "direction": direction}
                         for key, direction in zip(keys, directions or ["asc"] * len(keys))]
-    body = {"kind": "keyset", "profile": profile, "shape": shape,
+    body = {"kind": "keyset", "profile": profile, "datasource": "integration-mysql", "shape": shape,
             "query": spec, "page": {"kind": "first"}}
     rows, cursors = [], set()
     for _ in range(10):
@@ -95,17 +95,17 @@ def pages(source, keys, fields, shape, profile="admission-reader", status=200, d
     raise AssertionError("Keyset did not terminate")
 
 
-objects = request("/schemas/application/objects?profile=views-reader")["objects"]
+objects = request("/schemas/application/objects?profile=views-reader&datasource=integration-mysql")["objects"]
 assert {value["name"] for value in objects} == {
     "Orders", "join_orders", "materialized_orders", "character_aliases"}
 
 for source in ("Orders", "join_orders", "materialized_orders", "character_aliases"):
-    description = request(f"/schemas/application/objects/{source}?profile=views-reader")
+    description = request(f"/schemas/application/objects/{source}?profile=views-reader&datasource=integration-mysql")
     assert all(not column["primary_key"] and not column["indexed"] for column in description["columns"])
     if source == "character_aliases":
         assert "hidden_value" not in {column["name"] for column in description["columns"]}
         assert "exposed_alias" in {column["name"] for column in description["columns"]}
-    stats = request(f"/schemas/application/objects/{source}/statistics?profile=views-reader", status=422)
+    stats = request(f"/schemas/application/objects/{source}/statistics?profile=views-reader&datasource=integration-mysql", status=422)
     assert stats["code"] == "UNSUPPORTED_QUERY"
 
 for source, key, expected in (("Orders", "id", [["1", "active"], ["2", "closed"]]),
@@ -114,10 +114,10 @@ for source, key, expected in (("Orders", "id", [["1", "active"], ["2", "closed"]
     spec = query(source, [field(key, "source_id"), field("status")])
     spec["order_by"] = [{"field": key, "direction": "asc"}]
     before = main_select_count()
-    result = request("/queries/select", {"profile": "views-reader", "query": spec})
+    result = request("/queries/select", {"profile": "views-reader", "datasource": "integration-mysql", "query": spec})
     assert result["rows"] == expected, result
     assert main_select_count() > before, "Main SELECT log assertion did not detect successful execution"
-    unavailable("/queries/explain", {"profile": "views-reader", "query": spec})
+    unavailable("/queries/explain", {"profile": "views-reader", "datasource": "integration-mysql", "query": spec})
     for mode in ("scalar", "grouped"):
         projection = [{"kind": "measure", "function": "count_all", "alias": "row_count"}]
         if mode == "grouped":
@@ -125,12 +125,12 @@ for source, key, expected in (("Orders", "id", [["1", "active"], ["2", "closed"]
         aggregate = {"mode": mode, "source": {"schema": "application", "name": source}, "projection": projection}
         if mode == "grouped":
             aggregate["limit"] = 20
-        unavailable("/queries/aggregate", {"profile": "views-reader", "query": aggregate})
+        unavailable("/queries/aggregate", {"profile": "views-reader", "datasource": "integration-mysql", "query": aggregate})
 
-aliases = request("/queries/select", {"profile": "views-reader", "query": query(
+aliases = request("/queries/select", {"profile": "views-reader", "datasource": "integration-mysql", "query": query(
     "character_aliases", [field("unicode_label"), field("id"), field("exposed_alias")])})["rows"]
 assert len(aliases) == 4 and all(row[-1] == "hidden" for row in aliases), aliases
-unavailable("/queries/explain", {"profile": "views-reader", "query": query(
+unavailable("/queries/explain", {"profile": "views-reader", "datasource": "integration-mysql", "query": query(
     "character_aliases", [field("id"), field("exposed_alias")])})
 
 for source, keys, fields in (
@@ -152,7 +152,7 @@ for endpoint in ("select", "explain"):
         else:
             spec["order_by"] = [{"field": "hidden_value", "direction": "asc"}]
         before = service_log_count("command_type = 'Execute'")
-        denial = request("/queries/" + endpoint, {"profile": "views-reader", "query": spec}, status=403)
+        denial = request("/queries/" + endpoint, {"profile": "views-reader", "datasource": "integration-mysql", "query": spec}, status=403)
         assert denial["code"] == "DENIED_FIELD", denial
         assert service_log_count("command_type = 'Execute'") == before
 
@@ -174,7 +174,7 @@ for alias, status in (("unconstrained", 200), ("index_match", 200), ("index_mism
     if grouped:
         spec.update(limit=20, order_by=[{"kind": "measure", "alias": alias, "direction": "desc"}])
     before = main_select_count()
-    result = request("/queries/aggregate", {"profile": "admission-reader", "query": spec}, status=status)
+    result = request("/queries/aggregate", {"profile": "admission-reader", "datasource": "integration-mysql", "query": spec}, status=status)
     if status != 200:
         assert result["code"] == "UNSUPPORTED_QUERY", result
         assert main_select_count() == before
@@ -197,7 +197,7 @@ for name in ("unconstrained", "index_match", "index_mismatch", "estimate_rejecte
         assert rows == [["1", "active"], ["2", "closed"]], rows
         assert main_select_count() > before
 
-shapes = request("/query-shapes?profile=views-reader", accept="application/json")
+shapes = request("/query-shapes?profile=views-reader&datasource=integration-mysql", accept="application/json")
 payload = json.dumps(shapes)
 assert all(name not in payload for name in ("required_index", "allow_temporary_table", "allow_filesort", "maximum_rows_examined_per_scan"))
 assert service_log_count("argument IN ('LOCK INSTANCE FOR BACKUP', 'UNLOCK INSTANCE')") == 0

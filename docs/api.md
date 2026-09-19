@@ -13,7 +13,8 @@
   отклоняются;
 - явный JSON `null` отклоняется для свойств, в схеме которых не разрешён тип `null`;
 - API принимает структурированный `QuerySpec`, а не SQL или SQL fragments;
-- profile однозначно выбирает datasource и DBMS adapter;
+- клиент явно передаёт `profile` и `datasource`; разрешена только пара из
+  пересечения назначений principal и allowlist профиля;
 - значения predicates передаются отдельно от identifiers;
 - наличие endpoint не гарантирует поддержку capability выбранным адаптером.
 
@@ -38,6 +39,12 @@ POST /queries/explain
 ```
 
 Один процесс не обслуживает несколько несовместимых major-версий. `info.version` в OpenAPI относится к API-контракту, а версия конкретной сборки публикуется отдельно. Endpoint capabilities возвращает оба значения в полях `api_version` и `service_version`.
+
+Переход с scalar `profiles.*.datasource` на обязательные массивы
+`principals.*.datasources` и `profiles.*.datasources`, а также обязательный
+`datasource` во всех profile-scoped запросах является сознательно breaking
+изменением внутри API major `1`. Старый и новый сервер, policy и клиент нельзя
+смешивать; совместимой ветки decoder нет.
 
 ## Аутентификация
 
@@ -70,7 +77,11 @@ datasource и соответствие `mysql8` datasource поддержива�
 
 ### `GET /capabilities`
 
-Возвращает major-версию API, версию сборки сервиса, только профили, назначенные текущему principal, их datasources, adapters, effective limits и пересечение разрешённых policy operations с фактическими adapter capabilities. Не перечисляет недоступные профили и объекты.
+Возвращает major-версию API, версию сборки сервиса и только назначенные principal
+профили. В каждом профиле находится отсортированный список datasource из
+пересечения principal/profile allowlists; operations вычисляются отдельно для
+каждой пары как пересечение policy, adapter capabilities и готового discovery
+snapshot. Запрещённые пары не публикуются.
 
 Capability описывает реализацию скомпилированного adapter. Готовность и
 совместимость фактического сервера проверяются `/health/ready` и повторно на
@@ -81,7 +92,28 @@ Capability описывает реализацию скомпилированн�
   "api_version": "1",
   "service_version": "0.1.0",
   "policy_version": "17",
-  "profiles": []
+  "profiles": [{
+    "name": "analytics",
+    "limits": {
+      "deadline_ms": 3000,
+      "max_request_bytes": 65536,
+      "max_projection_fields": 50,
+      "max_group_by_fields": 20,
+      "max_order_by_fields": 20,
+      "max_predicates": 50,
+      "max_expression_depth": 8,
+      "max_parameters": 100,
+      "max_rows": 1000,
+      "max_result_bytes": 1048576,
+      "max_offset": 0,
+      "max_concurrency": 2
+    },
+    "datasources": [{
+      "name": "primary-mysql",
+      "adapter": "mysql8",
+      "operations": ["aggregate", "list_query_shapes"]
+    }]
+  }]
 }
 ```
 
@@ -91,12 +123,12 @@ profile одновременно разрешает `list_query_shapes` и хо�
 disclosure-safe snapshot успешно построен при запуске. Сам adapter эту
 capability не объявляет.
 
-### `GET /query-shapes?profile=...`
+### `GET /query-shapes?profile=...&datasource=...`
 
 Возвращает полный список публичных operator-curated шаблонов aggregate и
-keyset SELECT для одного назначенного profile. Query string закрыт: `profile`
-обязателен ровно один раз; дополнительные параметры, повторение и invalid
-UTF-8 дают `400 INVALID_REQUEST`. Любой HTTP method кроме `GET`, включая
+keyset SELECT для одной назначенной пары. Query string закрыт: `profile` и
+`datasource` обязательны ровно по одному разу; дополнительные, повторные,
+case-folded, пустые параметры и invalid UTF-8 дают `400 INVALID_REQUEST`. Любой HTTP method кроме `GET`, включая
 `HEAD`, отклоняется с `405 METHOD_NOT_ALLOWED` до аутентификации и audit. Все
 ответы, включая ошибки аутентификации и неподдерживаемые методы, содержат
 `Cache-Control: no-store` и `Vary: Accept`.
@@ -137,7 +169,8 @@ controls.
 }
 ```
 
-Неизвестный, неназначенный или не разрешающий обе операции profile одинаково
+Неизвестный profile/datasource, отсутствие любого назначения или запрещённая
+пара одинаково
 возвращает `403 DENIED_OPERATION`. Отсутствующая aggregate capability даёт
 `501 CAPABILITY_NOT_IMPLEMENTED`; тот же ответ без datasource call используется,
 если profile содержит `time_bucket`, а adapter не объявляет cached feature
@@ -149,7 +182,8 @@ controls.
 
 ### `POST /queries/explain`
 
-Принимает profile и структурированный `QuerySpec`. В MVP MySQL 8 adapter строит
+Принимает обязательные `profile`, `datasource` и структурированный `QuerySpec`.
+В MVP MySQL 8 adapter строит
 ограниченный `SELECT`, затем выполняет только `EXPLAIN FORMAT=JSON`. `source`
 может быть разрешённой таблицей или доверенным view. Неизвестные объекты и
 отсутствующие поля возвращают `422 UNSUPPORTED_QUERY`. Definitions, aliases и
@@ -159,6 +193,7 @@ dependencies views находятся под ответственностью а
 ```json
 {
   "profile": "query-explainer",
+  "datasource": "primary-mysql",
   "query": {
     "source": {
       "schema": "application",
@@ -203,7 +238,7 @@ Preflight не обходится. Readiness, discovery, description и обыч
 
 `order_by.field` всегда обозначает поле источника, а не alias проекции. Для grouped или aggregate запроса каждое поле сортировки должно также присутствовать в `group_by`; несовместимая форма отклоняется до обращения к СУБД.
 
-### `GET /schemas/{schema}/objects?profile=...`
+### `GET /schemas/{schema}/objects?profile=...&datasource=...`
 
 Возвращает полный policy-filtered список таблиц и views в
 разрешённой схеме. Запрещённые objects не появляются в результате.
@@ -213,8 +248,9 @@ Effective `max_result_bytes` применяется только после poli
 `413 RESULT_TOO_LARGE`; частичный список не выдаётся. Нефильтрованное чтение
 metadata в adapter отдельно ограничено абсолютным implementation maximum.
 
-Query string этих metadata endpoints закрыт: параметр `profile` обязателен и
-должен встретиться ровно один раз, любые дополнительные либо повторяющиеся
+Query string этих metadata endpoints закрыт: параметры `profile` и `datasource`
+обязательны и должны встретиться ровно по одному разу, любые дополнительные,
+case-folded либо повторяющиеся
 параметры и percent-decoded значения с невалидным UTF-8 отклоняются с
 `400 INVALID_REQUEST` до policy lookup и denial audit. Стандартные OpenAPI parameter
 objects не выражают закрытость всего query string, поэтому контракт явно
@@ -233,16 +269,15 @@ objects не выражают закрытость всего query string, по
 }
 ```
 
-### `GET /schemas/{schema}/objects/{object}?profile=...`
+### `GET /schemas/{schema}/objects/{object}?profile=...&datasource=...`
 
 Возвращает только разрешённые columns таблицы или view: portable type,
 MySQL-native type, nullable, primary-key и indexed flags. Отсутствующий,
 запрещённый object неразличимы для клиента и возвращают `404 NOT_FOUND`.
 Views возвращают свои columns без выдуманных primary-key/index flags.
-Каждый schema request явно передаёт `profile`, поскольку разные профили могут
-относиться к разным datasources.
+Каждый schema request явно передаёт пару `profile`/`datasource`.
 
-### `GET /schemas/{schema}/objects/{object}/statistics?profile=...`
+### `GET /schemas/{schema}/objects/{object}/statistics?profile=...&datasource=...`
 
 Возвращает полное bounded-наблюдение engine metadata для разрешённой физической
 InnoDB `BASE TABLE`: приблизительные `table_rows`, `data_length`,
@@ -260,7 +295,7 @@ strings внутри `{value, estimated}` или как JSON `null`; JSON number
 пути, SQL, индексы или колонки. `observed_at` — UTC-время gateway после чтения
 и валидации metadata, а не транзакционный snapshot DBMS.
 
-Query string закрыт и содержит ровно один `profile`. Request body запрещён:
+Query string закрыт и содержит ровно по одному `profile` и `datasource`. Request body запрещён:
 положительный `Content-Length`, handler-visible `Transfer-Encoding` или хотя бы
 один decoded byte дают `400 INVALID_REQUEST` после Basic Auth, но до profile и
 datasource. Любой метод кроме `GET` отклоняется до аутентификации с `405`;
@@ -294,6 +329,7 @@ profile `max_offset` остаётся semantic error `422 UNSUPPORTED_QUERY`.
 ```json
 {
   "profile": "data-reader",
+  "datasource": "primary-mysql",
   "query": {
     "source": {"schema": "application", "name": "orders"},
     "projection": [
@@ -376,6 +412,7 @@ columns. `LIMIT` ограничивает ответ, но не число ст�
 {
   "kind": "keyset",
   "profile": "analytics",
+  "datasource": "primary-mysql",
   "shape": "orders_by_id",
   "query": {
     "source": {"schema": "application", "name": "orders"},
@@ -532,6 +569,7 @@ estimate bound, `GROUP BY` expressions, arbitrary functions, joins, `HAVING`,
 ```json
 {
   "profile": "analytics",
+  "datasource": "primary-mysql",
   "query": {
     "mode": "grouped",
     "source": {"schema": "application", "name": "orders"},
@@ -628,6 +666,7 @@ prefix с `200` и `truncated: true`; prefix может быть пустым. �
 ```json
 {
   "profile": "analytics",
+  "datasource": "primary-mysql",
   "query": {
     "mode": "grouped",
     "source": {"schema": "application", "name": "operations"},
@@ -711,7 +750,10 @@ HTTP/1.1 501 Not Implemented
 }
 ```
 
-Проверка principal и назначения profile выполняется до раскрытия capabilities.
+Проверка principal и всей пары profile-datasource выполняется до обращения к
+adapter или datasource. Структурно неверный либо отсутствующий `datasource`
+даёт `400`; неизвестная или запрещённая пара — неразличимый `403
+DENIED_OPERATION`; отсутствующая capability разрешённой пары — `501`.
 
 ## HTTP-статусы
 

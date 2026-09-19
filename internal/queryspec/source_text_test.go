@@ -8,7 +8,7 @@ import (
 	"github.com/sigalx/quordon/internal/domain"
 )
 
-const diagnosticSelectJSON = `{"profile":"reader","query":{"source":{"schema":"app","name":"events"},"projection":[{"kind":"field","field":"event_date","representation":"source_text"}],"filter":{"kind":"predicate","field":"event_date","representation":"source_text","operator":"eq","values":[{"type":"string","value":"0000-00-00"}]},"order_by":[{"field":"event_date","direction":"asc","representation":"source_text"}],"limit":2}}`
+const diagnosticSelectJSON = `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"events"},"projection":[{"kind":"field","field":"event_date","representation":"source_text"}],"filter":{"kind":"predicate","field":"event_date","representation":"source_text","operator":"eq","values":[{"type":"string","value":"0000-00-00"}]},"order_by":[{"field":"event_date","direction":"asc","representation":"source_text"}],"limit":2}}`
 
 func TestSourceTextStrictDecodeAndShapeIdentity(t *testing.T) {
 	request, err := DecodeStrictSelect([]byte(diagnosticSelectJSON), 8)
@@ -55,7 +55,7 @@ func TestSourceTextStrictDecodeAndShapeIdentity(t *testing.T) {
 }
 
 func TestSourceTextKeysetRepresentationAndCursor(t *testing.T) {
-	request := KeysetRequest{Kind: "keyset", Profile: "reader", Shape: "events_page", Query: KeysetSpec{
+	request := KeysetRequest{Kind: "keyset", Profile: "reader", Datasource: "mysql", Shape: "events_page", Query: KeysetSpec{
 		Source: ResourceRef{Schema: "app", Name: "events"}, Projection: []Selection{{Kind: "field", Field: "event_date", Representation: RepresentationSourceText}},
 		OrderBy: []Sort{{Field: "event_date", Direction: "asc", Representation: RepresentationSourceText}}, Limit: 2,
 	}, Page: KeysetPage{Kind: "after", Cursor: []KeysetCursorValue{{Type: "string", Value: "2026-02-31"}}}}

@@ -2,7 +2,7 @@
 openapi: 3.1.0
 info:
   title: Quordon Query Shape Discovery API
-  version: 1.5.0
+  version: 1.6.0
   description: >-
     Executable contract module for discovering aggregate and keyset SELECT query shapes assigned
     to the authenticated principal. It is referenced by openapi.yaml and is
@@ -41,14 +41,14 @@ paths:
       summary: List allowed query shapes
       description: >-
         Returns the complete, validated public aggregate and keyset SELECT construction templates authorized
-        through exactly one assigned profile. The response is produced only
+        through exactly one assigned profile-datasource pair. The response is produced only
         from a disclosure-safe immutable snapshot derived from the policy,
         cached adapter capability set, and identifier semantics verified during
         datasource initialization;
         the operation never opens a database connection, resolves a schema or
         object, probes identifier semantics, or invokes a DBMS adapter. A shape
-        is returned only when the authenticated principal is assigned the
-        profile, the profile explicitly enables list_query_shapes and at least
+        is returned only when the authenticated principal is assigned both the
+        profile and datasource, the profile allows that datasource and explicitly enables list_query_shapes and at least
         one query-shape operation, and every configured shape operation is
         present in the adapter's effective cached capabilities. Before that
         derived snapshot is published, every shape is
@@ -303,6 +303,16 @@ paths:
           requested-profile-byte-length:
             field-name: requested_profile_bytes
             representation: bounded-unsigned-integer
+          records-requested-datasource-raw: false
+          requested-datasource-hash:
+            field-name: requested_datasource_hash
+            algorithm: sha-256
+            output: lowercase-hex
+            domain-separation-prefix: "quordon/requested-datasource/v1 followed by one NUL byte"
+            payload: exact-valid-utf8-query-parameter-bytes
+          requested-datasource-byte-length:
+            field-name: requested_datasource_bytes
+            representation: bounded-unsigned-integer
           records-authorized-profile: false
           records-resources-fields-shape-count-or-hash: false
           write-failure-result:
@@ -400,6 +410,9 @@ paths:
         cases:
           - profile-does-not-exist
           - profile-is-not-assigned-to-principal
+          - datasource-does-not-exist
+          - datasource-is-not-assigned-to-principal
+          - datasource-is-not-allowed-by-profile
           - profile-does-not-configure-list-query-shapes
           - profile-does-not-configure-aggregate-or-select-keyset
         status: 403
@@ -412,10 +425,11 @@ paths:
       tags: [Discovery]
       parameters:
         - $ref: "#/components/parameters/Profile"
+        - $ref: "#/components/parameters/Datasource"
         - $ref: "#/components/parameters/QueryShapesAccept"
       responses:
         "200":
-          description: Complete public aggregate shape list for the selected profile.
+          description: Complete public query-shape list for the selected profile-datasource pair.
           headers:
             X-Request-ID:
               $ref: "#/components/headers/RequiredRequestId"
@@ -490,6 +504,18 @@ components:
         type: string
         minLength: 1
 
+    Datasource:
+      name: datasource
+      in: query
+      required: true
+      description: >-
+        Datasource assigned to the principal and allowed by the selected
+        profile. It must occur exactly once; repeated values and invalid UTF-8
+        are rejected with 400 INVALID_REQUEST.
+      schema:
+        type: string
+        minLength: 1
+
     QueryShapesAccept:
       name: Accept
       in: header
@@ -528,7 +554,7 @@ components:
 
   responses:
     InvalidRequest:
-      description: The query parameter set or profile encoding is invalid.
+      description: The query parameter set or profile/datasource encoding is invalid.
       headers:
         X-Request-ID:
           $ref: "#/components/headers/RequiredRequestId"
@@ -556,7 +582,7 @@ components:
               - $ref: "#/components/schemas/AuthenticationRequiredError"
               - $ref: "#/components/schemas/InvalidCredentialsError"
     DeniedOperation:
-      description: The profile is not assigned or does not allow shape discovery.
+      description: The profile-datasource pair is not assigned or does not allow shape discovery.
       headers:
         X-Request-ID:
           $ref: "#/components/headers/RequiredRequestId"

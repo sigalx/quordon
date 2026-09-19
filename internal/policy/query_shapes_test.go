@@ -25,14 +25,14 @@ func TestQueryShapeDiscoveryBuildsBoundedImmutableAuthorization(t *testing.T) {
 		t.Fatal("profile binding exposed a mutable operations alias")
 	}
 	semantics := domain.IdentifierSemantics{CaseInsensitiveFields: true}
-	discovery, err := snapshot.BuildQueryShapeDiscovery("analytics", domain.AdapterMySQL8, semantics)
+	discovery, err := snapshot.BuildQueryShapeDiscovery("analytics", "mysql", domain.AdapterMySQL8, semantics)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !discovery.MatchesSemantics(semantics) || discovery.MatchesSemantics(domain.IdentifierSemantics{}) {
 		t.Fatal("discovery did not retain its identifier semantics")
 	}
-	authorized, err := snapshot.AuthorizeQueryShapeList("client", "credential-a", "analytics", &discovery)
+	authorized, err := snapshot.AuthorizeQueryShapeList(bindingForTest(t, snapshot, "client", "analytics", "mysql", domain.OperationListQueryShapes), "credential-a", &discovery)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,14 +71,93 @@ func TestQueryShapeDiscoveryBuildsBoundedImmutableAuthorization(t *testing.T) {
 	}
 }
 
+func TestQueryShapeDocumentIsSharedAcrossDatasourceBindings(t *testing.T) {
+	cfg := queryShapePolicyConfig()
+	cfg.Datasources["replica"] = config.Datasource{Adapter: domain.AdapterMySQL8}
+	profile := cfg.Profiles["analytics"]
+	profile.Datasources = []string{"mysql", "replica"}
+	cfg.Profiles["analytics"] = profile
+	cfg.Principals["client"] = config.Principal{
+		Profiles: []string{"analytics"}, Datasources: []string{"mysql", "replica"},
+	}
+	snapshot := NewSnapshot(cfg)
+	semantics := domain.IdentifierSemantics{CaseInsensitiveFields: true}
+	document, err := snapshot.BuildQueryShapeDocument("analytics", semantics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	primary, err := snapshot.BuildQueryShapeDiscoveryFromDocument(
+		"analytics", "mysql", domain.AdapterMySQL8, document,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replica, err := snapshot.BuildQueryShapeDiscoveryFromDocument(
+		"analytics", "replica", domain.AdapterMySQL8, document,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if primary.document != replica.document || primary.document != document {
+		t.Fatal("datasource bindings retained separate query-shape documents")
+	}
+	primaryToken, err := snapshot.AuthorizeQueryShapeList(
+		bindingForTest(t, snapshot, "client", "analytics", "mysql", domain.OperationListQueryShapes),
+		"credential", &primary,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replicaToken, err := snapshot.AuthorizeQueryShapeList(
+		bindingForTest(t, snapshot, "client", "analytics", "replica", domain.OperationListQueryShapes),
+		"credential", &replica,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	primaryPayload, err := primaryToken.ResponsePayload()
+	if err != nil {
+		t.Fatal(err)
+	}
+	replicaPayload, err := replicaToken.ResponsePayload()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(primaryPayload), `"datasource":"mysql"`) ||
+		!strings.Contains(string(replicaPayload), `"datasource":"replica"`) ||
+		primaryToken.ShapeSetHash() != replicaToken.ShapeSetHash() ||
+		len(primaryPayload) != primaryToken.ResultBytes() || len(replicaPayload) != replicaToken.ResultBytes() {
+		t.Fatalf("binding envelopes or shared document differ: primary=%s replica=%s", primaryPayload, replicaPayload)
+	}
+	primaryPayload[0] = '['
+	secondReplicaPayload, err := replicaToken.ResponsePayload()
+	if err != nil || secondReplicaPayload[0] != '{' {
+		t.Fatal("materialized response exposed shared mutable bytes")
+	}
+	differentDocument, err := snapshot.BuildQueryShapeDocument("analytics", domain.IdentifierSemantics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if differentDocument == document {
+		t.Fatal("different identifier semantics reused a query-shape document")
+	}
+	foreignDocument, err := NewSnapshot(cfg).BuildQueryShapeDocument("analytics", semantics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := snapshot.BuildQueryShapeDiscoveryFromDocument(
+		"analytics", "mysql", domain.AdapterMySQL8, foreignDocument,
+	); err == nil {
+		t.Fatal("foreign policy document was accepted")
+	}
+}
+
 func TestQueryShapeDiscoveryRejectsDeniedOrOversizedDisclosure(t *testing.T) {
 	cfg := queryShapePolicyConfig()
 	profile := cfg.Profiles["analytics"]
 	profile.Resources.Fields = config.PatternPolicy{Allow: []string{"app.orders.created_at"}}
 	cfg.Profiles["analytics"] = profile
-	if _, err := NewSnapshot(cfg).BuildQueryShapeDiscovery(
-		"analytics", domain.AdapterMySQL8, domain.IdentifierSemantics{CaseInsensitiveFields: true},
-	); err == nil || !strings.Contains(err.Error(), "denied field") {
+	if _, err := NewSnapshot(cfg).BuildQueryShapeDiscovery("analytics", "mysql", domain.AdapterMySQL8, domain.IdentifierSemantics{CaseInsensitiveFields: true}); err == nil || !strings.Contains(err.Error(), "denied field") {
 		t.Fatalf("denied field error = %v", err)
 	}
 
@@ -86,9 +165,7 @@ func TestQueryShapeDiscoveryRejectsDeniedOrOversizedDisclosure(t *testing.T) {
 	profile = cfg.Profiles["analytics"]
 	profile.Limits.MaxResultBytes = 1
 	cfg.Profiles["analytics"] = profile
-	if _, err := NewSnapshot(cfg).BuildQueryShapeDiscovery(
-		"analytics", domain.AdapterMySQL8, domain.IdentifierSemantics{CaseInsensitiveFields: true},
-	); err == nil || !strings.Contains(err.Error(), "exceeds max_result_bytes") {
+	if _, err := NewSnapshot(cfg).BuildQueryShapeDiscovery("analytics", "mysql", domain.AdapterMySQL8, domain.IdentifierSemantics{CaseInsensitiveFields: true}); err == nil || !strings.Contains(err.Error(), "exceeds max_result_bytes") {
 		t.Fatalf("oversized disclosure error = %v", err)
 	}
 
@@ -96,9 +173,7 @@ func TestQueryShapeDiscoveryRejectsDeniedOrOversizedDisclosure(t *testing.T) {
 	profile = cfg.Profiles["analytics"]
 	profile.Query.AllowGroupBy = false
 	cfg.Profiles["analytics"] = profile
-	if _, err := NewSnapshot(cfg).BuildQueryShapeDiscovery(
-		"analytics", domain.AdapterMySQL8, domain.IdentifierSemantics{CaseInsensitiveFields: true},
-	); err == nil || !strings.Contains(err.Error(), "denied query feature") {
+	if _, err := NewSnapshot(cfg).BuildQueryShapeDiscovery("analytics", "mysql", domain.AdapterMySQL8, domain.IdentifierSemantics{CaseInsensitiveFields: true}); err == nil || !strings.Contains(err.Error(), "denied query feature") {
 		t.Fatalf("denied feature error = %v", err)
 	}
 }
@@ -106,34 +181,30 @@ func TestQueryShapeDiscoveryRejectsDeniedOrOversizedDisclosure(t *testing.T) {
 func TestQueryShapeDiscoveryAuthorizationFailsClosed(t *testing.T) {
 	cfg := queryShapePolicyConfig()
 	snapshot := NewSnapshot(cfg)
-	discovery, err := snapshot.BuildQueryShapeDiscovery(
-		"analytics", domain.AdapterMySQL8, domain.IdentifierSemantics{CaseInsensitiveFields: true},
-	)
+	discovery, err := snapshot.BuildQueryShapeDiscovery("analytics", "mysql", domain.AdapterMySQL8, domain.IdentifierSemantics{CaseInsensitiveFields: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := snapshot.AuthorizeQueryShapeList("other", "credential", "analytics", &discovery); err == nil {
+	if _, err := snapshot.AuthorizeQueryShapeList(AuthorizedBinding{}, "credential", &discovery); err == nil {
 		t.Fatal("unassigned principal received a query-shape token")
 	}
-	if _, err := snapshot.AuthorizeQueryShapeList("client", "", "analytics", &discovery); err == nil {
+	if _, err := snapshot.AuthorizeQueryShapeList(bindingForTest(t, snapshot, "client", "analytics", "mysql", domain.OperationListQueryShapes), "", &discovery); err == nil {
 		t.Fatal("empty credential identifier received a query-shape token")
 	}
 	mutated := discovery
 	mutated.policyHash = "different"
-	if _, err := snapshot.AuthorizeQueryShapeList("client", "credential", "analytics", &mutated); err == nil {
+	if _, err := snapshot.AuthorizeQueryShapeList(bindingForTest(t, snapshot, "client", "analytics", "mysql", domain.OperationListQueryShapes), "credential", &mutated); err == nil {
 		t.Fatal("mismatched discovery snapshot received a token")
 	}
 	foreignSnapshot := NewSnapshot(cfg)
-	foreignDiscovery, err := foreignSnapshot.BuildQueryShapeDiscovery(
-		"analytics", domain.AdapterMySQL8, domain.IdentifierSemantics{CaseInsensitiveFields: true},
-	)
+	foreignDiscovery, err := foreignSnapshot.BuildQueryShapeDiscovery("analytics", "mysql", domain.AdapterMySQL8, domain.IdentifierSemantics{CaseInsensitiveFields: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if foreignDiscovery.policyHash != discovery.policyHash || foreignDiscovery.generation != discovery.generation {
 		t.Fatal("foreign snapshot fixture does not exercise equal public snapshot attributes")
 	}
-	if _, err := snapshot.AuthorizeQueryShapeList("client", "credential", "analytics", &foreignDiscovery); err == nil {
+	if _, err := snapshot.AuthorizeQueryShapeList(bindingForTest(t, snapshot, "client", "analytics", "mysql", domain.OperationListQueryShapes), "credential", &foreignDiscovery); err == nil {
 		t.Fatal("discovery owned by another policy snapshot received a token")
 	}
 	if _, err := (AuthorizedQueryShapeList{}).ResponsePayload(); err == nil {
@@ -156,13 +227,11 @@ func TestQueryShapeDiscoveryIncludesTimeBuckets(t *testing.T) {
 	})
 	cfg.Profiles["analytics"] = profile
 	snapshot := NewSnapshot(cfg)
-	discovery, err := snapshot.BuildQueryShapeDiscovery(
-		"analytics", domain.AdapterMySQL8, domain.IdentifierSemantics{CaseInsensitiveFields: true},
-	)
+	discovery, err := snapshot.BuildQueryShapeDiscovery("analytics", "mysql", domain.AdapterMySQL8, domain.IdentifierSemantics{CaseInsensitiveFields: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	authorized, err := snapshot.AuthorizeQueryShapeList("client", "credential", "analytics", &discovery)
+	authorized, err := snapshot.AuthorizeQueryShapeList(bindingForTest(t, snapshot, "client", "analytics", "mysql", domain.OperationListQueryShapes), "credential", &discovery)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,9 +255,7 @@ func TestQueryShapeDiscoveryCanonicalizesAuditScope(t *testing.T) {
 	cfg.Profiles["analytics"] = profile
 
 	snapshot := NewSnapshot(cfg)
-	discovery, err := snapshot.BuildQueryShapeDiscovery(
-		"analytics",
-		domain.AdapterMySQL8,
+	discovery, err := snapshot.BuildQueryShapeDiscovery("analytics", "mysql", domain.AdapterMySQL8,
 		domain.IdentifierSemantics{
 			CaseInsensitiveSchemas: true,
 			CaseInsensitiveObjects: true,
@@ -198,7 +265,7 @@ func TestQueryShapeDiscoveryCanonicalizesAuditScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	authorized, err := snapshot.AuthorizeQueryShapeList("client", "credential", "analytics", &discovery)
+	authorized, err := snapshot.AuthorizeQueryShapeList(bindingForTest(t, snapshot, "client", "analytics", "mysql", domain.OperationListQueryShapes), "credential", &discovery)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,13 +299,11 @@ func TestQueryShapeDiscoveryAuditsCompleteShapeSet(t *testing.T) {
 	}}
 	cfg.Profiles["analytics"] = profile
 	snapshot := NewSnapshot(cfg)
-	discovery, err := snapshot.BuildQueryShapeDiscovery(
-		"analytics", domain.AdapterMySQL8, domain.IdentifierSemantics{CaseInsensitiveFields: true},
-	)
+	discovery, err := snapshot.BuildQueryShapeDiscovery("analytics", "mysql", domain.AdapterMySQL8, domain.IdentifierSemantics{CaseInsensitiveFields: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	authorized, err := snapshot.AuthorizeQueryShapeList("client", "credential", "analytics", &discovery)
+	authorized, err := snapshot.AuthorizeQueryShapeList(bindingForTest(t, snapshot, "client", "analytics", "mysql", domain.OperationListQueryShapes), "credential", &discovery)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,10 +378,10 @@ func queryShapePolicyConfig() config.Config {
 	}
 	return config.Config{
 		Version: 3, PolicyHash: "redacted-policy-hash", HardLimits: limits,
-		Principals:  map[string]config.Principal{"client": {Profiles: []string{"analytics"}}},
+		Principals:  map[string]config.Principal{"client": {Profiles: []string{"analytics"}, Datasources: []string{"mysql"}}},
 		Datasources: map[string]config.Datasource{"mysql": {Adapter: domain.AdapterMySQL8}},
 		Profiles: map[string]config.Profile{"analytics": {
-			Datasource: "mysql", Limits: limits,
+			Datasources: []string{"mysql"}, Limits: limits,
 			Operations: []domain.Operation{domain.OperationAggregate, domain.OperationListQueryShapes},
 			Resources: config.ResourcePolicy{
 				Schemas: config.PatternPolicy{Allow: []string{"app"}},

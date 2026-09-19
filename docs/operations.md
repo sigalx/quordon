@@ -57,7 +57,7 @@ policy authorization и обязательный аудит.
 - входящие connections только от разрешённых API clients;
 - исходящий доступ только к настроенным datasources, audit sink и secret provider;
 - secrets в mounted credentials или внешнем secret provider;
-- отдельный DB user и pool для каждого требуемого security profile;
+- отдельный DB user и pool для каждого datasource;
 - внешний ingress admission/concurrency control до передачи запросов gateway;
 - systemd hardening либо эквивалентные container restrictions.
 
@@ -77,6 +77,31 @@ datasource -> adapter -> credentials -> connection pool -> capability set
 одинаковым `lower_case_table_names` на всех backend-серверах. Балансировка между
 серверами с различной identifier semantics в MVP не поддерживается; такие
 серверы настраиваются как отдельные datasources.
+
+Principal и profile содержат независимые datasource allowlists. Запрос
+разрешается только для их пересечения и обязан явно передать оба имени.
+Concurrency gate индексируется парой `(profile, datasource)`, а отдельный
+global gate сохраняет общий предел процесса. Discovery snapshots также
+строятся для каждой пары; изменение identifier semantics одного datasource
+инвалидирует snapshots всех profiles только этого datasource.
+
+### Breaking-миграция с scalar datasource
+
+Контракт остаётся API major `1`, но миграция сознательно несовместима со старым
+клиентом и policy. До окна обслуживания оператор готовит одним комплектом:
+
+1. Новую policy с обязательными `principals.*.datasources` и
+   `profiles.*.datasources`; legacy `profiles.*.datasource` удаляется.
+2. Новый клиент, передающий `datasource` во всех JSON envelopes и ровно один
+   query parameter `datasource` во всех metadata/discovery GET.
+3. Новый бинарник и offline `--check-config` новой policy под service account.
+
+В окно запросы клиентов останавливаются, затем атомарно устанавливаются новая
+policy и сервер, после чего переключаются клиенты. Проверяются `/capabilities`,
+`/query-shapes`, representative metadata/EXPLAIN/SELECT/aggregate/keyset
+отдельно для test и RC, readiness/liveness, routing, audit и отказ запрещённой
+пары. Rollback выполняется только комплектом: прежний пакет, прежняя policy и
+прежний клиент. Смешанные поколения считаются несовместимыми.
 
 ## Basic Auth
 

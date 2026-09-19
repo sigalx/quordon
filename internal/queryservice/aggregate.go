@@ -48,17 +48,17 @@ func (s *Service) Aggregate(
 	if err != nil {
 		return AggregateResult{}, &Error{Kind: ErrorInvalid, Err: err}
 	}
-	profile, assigned := s.assignedProfile(principal, request.Profile)
-	if !assigned || !slices.Contains(profile.Operations, domain.OperationAggregate) {
+	binding, assigned := s.assignedBinding(principal, request.Profile, request.Datasource, domain.OperationAggregate)
+	if !assigned {
 		if err := s.writeDenial(
-			ctx, requestID, queryID, principal, clientIdentifier, request.Profile,
+			ctx, requestID, queryID, principal, clientIdentifier, request.Profile, request.Datasource,
 			domain.OperationAggregate, policy.ReasonDeniedOperation, "",
 		); err != nil {
 			return AggregateResult{}, &Error{Kind: ErrorServiceUnavailable, Err: err}
 		}
 		return AggregateResult{}, &Error{Kind: ErrorDenied, ReasonCode: policy.ReasonDeniedOperation}
 	}
-	limits := s.policy.HardLimits().Min(profile.Limits)
+	limits := binding.Limits()
 	if bodyBytes > limits.MaxRequestBytes {
 		return AggregateResult{}, &Error{Kind: ErrorTooLarge}
 	}
@@ -76,18 +76,18 @@ func (s *Service) Aggregate(
 		return AggregateResult{}, &Error{Kind: ErrorInvalid, Err: err}
 	}
 	queryShapeHash := queryspec.AggregateShapeHash(validated.Spec())
-	if err := s.precheckSourceText(ctx, requestID, queryID, principal, clientIdentifier, request.Profile, profile, domain.OperationAggregate, queryShapeHash, queryspec.AggregateUsesSourceText(validated.Spec())); err != nil {
+	if err := s.precheckSourceText(ctx, requestID, queryID, principal, clientIdentifier, binding, domain.OperationAggregate, queryShapeHash, queryspec.AggregateUsesSourceText(validated.Spec())); err != nil {
 		return AggregateResult{}, err
 	}
-	adapterName := s.databases.AdapterName(profile.Datasource)
-	if !slices.Contains(s.databases.Capabilities(profile.Datasource), domain.OperationAggregate) ||
+	adapterName := s.databases.AdapterName(binding.Datasource())
+	if !slices.Contains(s.databases.Capabilities(binding.Datasource()), domain.OperationAggregate) ||
 		queryspec.AggregateUsesTimeBucket(validated.Spec()) &&
-			!slices.Contains(s.databases.Features(profile.Datasource), domain.FeatureTimeBucketUTC) ||
-		queryspec.AggregateUsesNumericBucket(validated.Spec()) && !slices.Contains(s.databases.Features(profile.Datasource), domain.FeatureNumericBucketExact) {
+			!slices.Contains(s.databases.Features(binding.Datasource()), domain.FeatureTimeBucketUTC) ||
+		queryspec.AggregateUsesNumericBucket(validated.Spec()) && !slices.Contains(s.databases.Features(binding.Datasource()), domain.FeatureNumericBucketExact) {
 		if err := s.writeAudit(context.WithoutCancel(ctx), audit.Event{
 			Type: "query_completion", RequestID: requestID, QueryID: queryID, Principal: principal,
 			ClientIdentifier: clientIdentifier, PolicyProfile: request.Profile,
-			PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(), Datasource: profile.Datasource,
+			PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(), Datasource: binding.Datasource(),
 			Adapter: adapterName, Operation: string(domain.OperationAggregate), Outcome: "not_implemented",
 			QueryShapeHash: queryShapeHash,
 		}); err != nil {
@@ -98,38 +98,38 @@ func (s *Service) Aggregate(
 	executionContext, cancel := context.WithTimeout(ctx, limits.Deadline())
 	defer cancel()
 	semanticsStarted := time.Now()
-	semantics, err := s.databases.IdentifierSemantics(executionContext, profile.Datasource)
+	semantics, err := s.databases.IdentifierSemantics(executionContext, binding.Datasource())
 	if err != nil {
 		return AggregateResult{}, s.completeQueryError(
 			ctx, requestID, queryID, principal, clientIdentifier, request.Profile,
-			profile.Datasource, adapterName, domain.OperationAggregate, queryShapeHash,
+			binding.Datasource(), adapterName, domain.OperationAggregate, queryShapeHash,
 			nil, nil, map[string]any{"mode": request.Query.Mode}, semanticsStarted, err,
 		)
 	}
-	s.observeIdentifierSemantics(request.Profile, semantics)
+	s.observeIdentifierSemantics(binding.Key(), semantics)
 	normalized, err := queryspec.NormalizeAggregateIdentifiers(validated, semantics)
 	if err != nil {
 		return AggregateResult{}, s.completeQueryError(
 			ctx, requestID, queryID, principal, clientIdentifier, request.Profile,
-			profile.Datasource, adapterName, domain.OperationAggregate, queryShapeHash,
+			binding.Datasource(), adapterName, domain.OperationAggregate, queryShapeHash,
 			nil, nil, map[string]any{"mode": request.Query.Mode}, semanticsStarted,
 			&database.Error{Kind: database.ErrorInvalid, Err: err},
 		)
 	}
 	queryShapeHash = queryspec.AggregateShapeHash(normalized.Spec())
-	authorized, err := s.policy.AuthorizeAggregate(principal, request.Profile, normalized, semantics)
+	authorized, err := s.policy.AuthorizeAggregate(binding, normalized, semantics)
 	if err != nil {
 		reason := ""
 		if !policy.IsDenial(err, &reason) {
 			return AggregateResult{}, s.completeQueryError(
 				ctx, requestID, queryID, principal, clientIdentifier, request.Profile,
-				profile.Datasource, adapterName, domain.OperationAggregate, queryShapeHash,
+				binding.Datasource(), adapterName, domain.OperationAggregate, queryShapeHash,
 				nil, nil, map[string]any{"mode": request.Query.Mode}, semanticsStarted,
 				&database.Error{Kind: database.ErrorInvalid, Err: err},
 			)
 		}
 		if auditErr := s.writeDenial(
-			ctx, requestID, queryID, principal, clientIdentifier, request.Profile,
+			ctx, requestID, queryID, principal, clientIdentifier, binding.Profile(), binding.Datasource(),
 			domain.OperationAggregate, reason, queryShapeHash,
 		); auditErr != nil {
 			return AggregateResult{}, &Error{Kind: ErrorServiceUnavailable, Err: auditErr}
@@ -142,29 +142,29 @@ func (s *Service) Aggregate(
 	fields := authorized.ReferencedFields()
 	if err := s.writeAllowDecision(
 		ctx, requestID, queryID, principal, clientIdentifier, request.Profile,
-		profile.Datasource, adapterName, domain.OperationAggregate, resources, fields, queryShapeHash,
+		binding.Datasource(), adapterName, domain.OperationAggregate, resources, fields, queryShapeHash,
 	); err != nil {
 		return AggregateResult{}, err
 	}
 	baseBytes, err := aggregateEnvelopeBaseBytes(
 		authorizedSpec.Mode, queryID, request.Profile, s.policy.Version(),
-		profile.Datasource, adapterName, limits,
+		binding.Datasource(), adapterName, limits,
 	)
 	if err != nil || baseBytes > limits.MaxResultBytes {
 		databaseErr := &database.Error{Kind: database.ErrorResultTooLarge, Err: err}
 		return AggregateResult{}, s.completeQueryError(
 			ctx, requestID, queryID, principal, clientIdentifier, request.Profile,
-			profile.Datasource, adapterName, domain.OperationAggregate, queryShapeHash,
+			binding.Datasource(), adapterName, domain.OperationAggregate, queryShapeHash,
 			resources, fields, aggregateAuditMetadata(authorized, authorizedSpec.Mode), time.Now(), databaseErr,
 		)
 	}
-	releaseCapacity, ok := s.acquireCapacity(request.Profile)
+	releaseCapacity, ok := s.acquireCapacity(binding.Key())
 	if !ok {
 		capacityStarted := time.Now()
 		if err := s.writeAudit(context.WithoutCancel(ctx), audit.Event{
 			Type: "query_completion", RequestID: requestID, QueryID: queryID, Principal: principal,
 			ClientIdentifier: clientIdentifier, PolicyProfile: request.Profile,
-			PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(), Datasource: profile.Datasource,
+			PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(), Datasource: binding.Datasource(),
 			Adapter: adapterName, Operation: string(domain.OperationAggregate), Outcome: "error",
 			ErrorKind: string(ErrorCapacity), DurationMS: durationMilliseconds(capacityStarted),
 			QueryShapeHash: queryShapeHash, Resources: resources, Fields: fields,
@@ -182,14 +182,14 @@ func (s *Service) Aggregate(
 	if databaseErr != nil {
 		return AggregateResult{}, s.completeQueryError(
 			ctx, requestID, queryID, principal, clientIdentifier, request.Profile,
-			profile.Datasource, adapterName, domain.OperationAggregate, queryShapeHash,
+			binding.Datasource(), adapterName, domain.OperationAggregate, queryShapeHash,
 			resources, fields, aggregateAuditMetadata(authorized, authorizedSpec.Mode), started, databaseErr,
 		)
 	}
 	if err := s.writeAudit(context.WithoutCancel(ctx), audit.Event{
 		Type: "query_completion", RequestID: requestID, QueryID: queryID, Principal: principal,
 		ClientIdentifier: clientIdentifier, PolicyProfile: request.Profile,
-		PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(), Datasource: profile.Datasource,
+		PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(), Datasource: binding.Datasource(),
 		Adapter: adapterName, Operation: string(domain.OperationAggregate), Outcome: "success",
 		DurationMS: durationMilliseconds(started), QueryShapeHash: queryShapeHash,
 		ResultBytes: databaseResult.ResultBytes, Resources: resources, Fields: fields,
@@ -202,7 +202,7 @@ func (s *Service) Aggregate(
 	}
 	return AggregateResult{
 		Mode: databaseResult.Mode, QueryID: queryID, PolicyProfile: request.Profile,
-		PolicyVersion: s.policy.Version(), Datasource: profile.Datasource, Adapter: adapterName,
+		PolicyVersion: s.policy.Version(), Datasource: binding.Datasource(), Adapter: adapterName,
 		Columns: databaseResult.Columns, Rows: databaseResult.Rows, RowCount: databaseResult.RowCount,
 		Truncated: databaseResult.Truncated, Limits: limits, Warnings: []string{},
 	}, nil

@@ -28,6 +28,7 @@ authentication:
 principals:
   integration-client:
     profiles: [query-explainer, data-reader, metadata-reader, analytics, views-reader, admission-reader, index-merge-reader, diagnostic-reader]
+    datasources: [integration-mysql]
 
 datasources:
   integration-mysql:
@@ -46,7 +47,7 @@ datasources:
 
 profiles:
   query-explainer:
-    datasource: integration-mysql
+    datasources: [integration-mysql]
     operations: [explain_select]
     resources:
       schemas:
@@ -77,7 +78,7 @@ profiles:
       max_concurrency: 2
 
   data-reader:
-    datasource: integration-mysql
+    datasources: [integration-mysql]
     operations: [list_objects, describe_object, describe_object_statistics, select]
     resources:
       schemas:
@@ -115,7 +116,7 @@ profiles:
       max_concurrency: 2
 
   metadata-reader:
-    datasource: integration-mysql
+    datasources: [integration-mysql]
     operations: [list_objects, describe_object]
     resources:
       schemas:
@@ -145,7 +146,7 @@ profiles:
       max_concurrency: 2
 
   analytics:
-    datasource: integration-mysql
+    datasources: [integration-mysql]
     operations: [aggregate, select_keyset, list_query_shapes]
     resources:
       schemas:
@@ -464,7 +465,7 @@ profiles:
       max_concurrency: 2
 
   views-reader:
-    datasource: integration-mysql
+    datasources: [integration-mysql]
     operations: [list_objects, describe_object, describe_object_statistics, explain_select, select, aggregate, select_keyset, list_query_shapes]
     resources:
       schemas:
@@ -600,7 +601,7 @@ profiles:
 
   # Physical-object fixtures exercise admission independently of SHOW VIEW.
   admission-reader:
-    datasource: integration-mysql
+    datasources: [integration-mysql]
     operations: [aggregate, select_keyset]
     resources:
       schemas:
@@ -757,7 +758,7 @@ profiles:
 
   # Native index-merge regression fixtures use the same SELECT-only datasource.
   index-merge-reader:
-    datasource: integration-mysql
+    datasources: [integration-mysql]
     operations: [aggregate, select_keyset]
     resources:
       schemas:
@@ -1268,7 +1269,7 @@ profiles:
       max_offset: 0
       max_concurrency: 2
   diagnostic-reader:
-    datasource: integration-mysql
+    datasources: [integration-mysql]
     operations:
       - select
       - explain_select

@@ -35,28 +35,28 @@ type tableStatisticsResponse struct {
 
 func (s *Service) DescribeObjectStatistics(
 	ctx context.Context,
-	requestID, principal, clientIdentifier, profileName string,
+	requestID, principal, clientIdentifier, profileName, datasource string,
 	object queryspec.ResourceRef,
 ) ([]byte, error) {
 	started := time.Now()
 	if !queryspec.IsIdentifier(object.Schema) || !queryspec.IsIdentifier(object.Name) {
 		return nil, &Error{Kind: ErrorInvalid}
 	}
-	profile, assigned := s.assignedProfile(principal, profileName)
-	if !assigned || !slices.Contains(profile.Operations, domain.OperationDescribeObjectStatistics) {
-		if err := s.writeObjectStatisticsDenial(
-			ctx, requestID, principal, clientIdentifier, "", "", "",
-			policy.ReasonDeniedOperation,
+	binding, assigned := s.assignedBinding(principal, profileName, datasource, domain.OperationDescribeObjectStatistics)
+	if !assigned {
+		if err := s.writeDenial(
+			ctx, requestID, "", principal, clientIdentifier, profileName, datasource,
+			domain.OperationDescribeObjectStatistics, policy.ReasonDeniedOperation, "",
 		); err != nil {
 			return nil, &Error{Kind: ErrorServiceUnavailable, Err: err}
 		}
 		return nil, &Error{Kind: ErrorDenied, ReasonCode: policy.ReasonDeniedOperation}
 	}
-	limits := s.policy.HardLimits().Min(profile.Limits)
-	adapterName := s.databases.AdapterName(profile.Datasource)
-	if !slices.Contains(s.databases.Capabilities(profile.Datasource), domain.OperationDescribeObjectStatistics) {
+	limits := binding.Limits()
+	adapterName := s.databases.AdapterName(binding.Datasource())
+	if !slices.Contains(s.databases.Capabilities(binding.Datasource()), domain.OperationDescribeObjectStatistics) {
 		if err := s.completeObjectStatistics(
-			ctx, requestID, principal, clientIdentifier, profileName, profile.Datasource, adapterName,
+			ctx, requestID, principal, clientIdentifier, profileName, binding.Datasource(), adapterName,
 			"not_implemented", "", started, 0, nil, 0, 0,
 		); err != nil {
 			return nil, &Error{Kind: ErrorServiceUnavailable, Err: err}
@@ -65,26 +65,26 @@ func (s *Service) DescribeObjectStatistics(
 	}
 	executionContext, cancel := context.WithTimeout(ctx, limits.Deadline())
 	defer cancel()
-	semantics, err := s.databases.IdentifierSemantics(executionContext, profile.Datasource)
+	semantics, err := s.databases.IdentifierSemantics(executionContext, binding.Datasource())
 	if err != nil {
 		if auditErr := s.completeObjectStatistics(
-			ctx, requestID, principal, clientIdentifier, profileName, profile.Datasource, adapterName,
+			ctx, requestID, principal, clientIdentifier, profileName, binding.Datasource(), adapterName,
 			"error", string(classifyDatabaseAuditError(err)), started, 0, nil, 0, 0,
 		); auditErr != nil {
 			return nil, &Error{Kind: ErrorServiceUnavailable, Err: auditErr}
 		}
 		return nil, mapDatabaseError(err)
 	}
-	s.observeIdentifierSemantics(profileName, semantics)
+	s.observeIdentifierSemantics(binding.Key(), semantics)
 	authorized, err := s.policy.AuthorizeObjectStatistics(
-		principal, clientIdentifier, profileName, adapterName, object, semantics,
+		binding, clientIdentifier, adapterName, object, semantics,
 	)
 	if err != nil {
 		reason := policy.ReasonDeniedOperation
 		policy.IsDenial(err, &reason)
 		if auditErr := s.writeObjectStatisticsDenial(
 			ctx, requestID, principal, clientIdentifier, profileName,
-			profile.Datasource, adapterName, reason,
+			binding.Datasource(), adapterName, reason,
 		); auditErr != nil {
 			return nil, &Error{Kind: ErrorServiceUnavailable, Err: auditErr}
 		}
@@ -114,7 +114,7 @@ func (s *Service) DescribeObjectStatistics(
 		}
 		return nil, mapDatabaseError(databaseErr)
 	}
-	releaseCapacity, capacityOK := s.acquireCapacity(profileName)
+	releaseCapacity, capacityOK := s.acquireCapacity(binding.Key())
 	if !capacityOK {
 		if auditErr := s.completeObjectStatistics(
 			ctx, requestID, principal, clientIdentifier, profileName, authorized.Datasource(), authorized.Adapter(),
@@ -340,7 +340,8 @@ func (s *Service) validateTableStatisticsAuditBounds(maximum int) error {
 	maximumDuration := int64(math.MaxInt64)
 	requestID := strings.Repeat("r", 64)
 	maximumIdentifier := strings.Repeat("i", queryspec.ProtocolMaxIdentifierBytes)
-	for _, identity := range s.queryShapeAuditIdentities {
+	identity := s.queryShapeAuditIdentity
+	if identity.principal != "" && identity.clientIdentifier != "" {
 		denial := audit.Event{
 			Timestamp: time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC),
 			Type:      "operation_decision", RequestID: requestID,
@@ -352,43 +353,47 @@ func (s *Service) validateTableStatisticsAuditBounds(maximum int) error {
 		if err := requireAuditEventBound(denial, maximum); err != nil {
 			return fmt.Errorf("table-statistics denial audit bound: %w", err)
 		}
-		for _, profileName := range s.policy.PrincipalProfiles(identity.principal) {
-			datasource, operations, _, ok := s.policy.ProfileBinding(profileName)
-			if !ok || !slices.Contains(operations, domain.OperationDescribeObjectStatistics) {
-				continue
-			}
-			adapterName := s.databases.AdapterName(datasource)
-			resourceDenial := denial
-			resourceDenial.PolicyProfile = profileName
-			resourceDenial.Datasource = datasource
-			resourceDenial.Adapter = adapterName
-			resourceDenial.ReasonCode = policy.ReasonDeniedResource
-			if err := requireAuditEventBound(resourceDenial, maximum); err != nil {
-				return fmt.Errorf("table-statistics resource-denial audit bound: %w", err)
-			}
-			base := audit.Event{
-				Timestamp: denial.Timestamp, Type: "operation_completion", RequestID: requestID,
-				Principal: identity.principal, ClientIdentifier: identity.clientIdentifier,
-				PolicyProfile: profileName, PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(),
-				Datasource: datasource, Adapter: adapterName,
-				Operation: string(domain.OperationDescribeObjectStatistics),
-				Outcome:   "error", ErrorKind: "upstream", DurationMS: &maximumDuration,
-			}
-			if err := requireAuditEventBound(base, maximum); err != nil {
-				return fmt.Errorf("table-statistics pre-token audit bound: %w", err)
-			}
-			base.Resources = []audit.Resource{{Schema: maximumIdentifier, Object: maximumIdentifier}}
-			if err := requireAuditEventBound(base, maximum); err != nil {
-				return fmt.Errorf("table-statistics post-token audit bound: %w", err)
-			}
-			base.Outcome, base.ErrorKind, base.ResultBytes = "success", "", maximum
-			base.Metadata = map[string]any{
-				"partition_count":    maxPhysicalPartitionAuditCount,
-				"subpartition_count": maxPhysicalPartitionAuditCount,
-			}
-			if err := requireAuditEventBound(base, maximum); err != nil {
-				return fmt.Errorf("table-statistics success audit bound: %w", err)
-			}
+	}
+	for key, identity := range s.bindingAuditIdentities {
+		_, operations, _, ok := s.policy.ProfileBinding(key.Profile)
+		if !ok || !slices.Contains(operations, domain.OperationDescribeObjectStatistics) {
+			continue
+		}
+		adapterName := s.databases.AdapterName(key.Datasource)
+		resourceDenial := audit.Event{
+			Timestamp: time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC),
+			Type:      "operation_decision", RequestID: requestID,
+			Principal: identity.principal, ClientIdentifier: identity.clientIdentifier,
+			PolicyProfile: key.Profile, PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(),
+			Datasource: key.Datasource, Adapter: adapterName,
+			Operation: string(domain.OperationDescribeObjectStatistics),
+			Decision:  "deny", ReasonCode: policy.ReasonDeniedResource,
+		}
+		if err := requireAuditEventBound(resourceDenial, maximum); err != nil {
+			return fmt.Errorf("table-statistics resource-denial audit bound: %w", err)
+		}
+		base := audit.Event{
+			Timestamp: resourceDenial.Timestamp, Type: "operation_completion", RequestID: requestID,
+			Principal: identity.principal, ClientIdentifier: identity.clientIdentifier,
+			PolicyProfile: key.Profile, PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(),
+			Datasource: key.Datasource, Adapter: adapterName,
+			Operation: string(domain.OperationDescribeObjectStatistics),
+			Outcome:   "error", ErrorKind: "upstream", DurationMS: &maximumDuration,
+		}
+		if err := requireAuditEventBound(base, maximum); err != nil {
+			return fmt.Errorf("table-statistics pre-token audit bound: %w", err)
+		}
+		base.Resources = []audit.Resource{{Schema: maximumIdentifier, Object: maximumIdentifier}}
+		if err := requireAuditEventBound(base, maximum); err != nil {
+			return fmt.Errorf("table-statistics post-token audit bound: %w", err)
+		}
+		base.Outcome, base.ErrorKind, base.ResultBytes = "success", "", maximum
+		base.Metadata = map[string]any{
+			"partition_count":    maxPhysicalPartitionAuditCount,
+			"subpartition_count": maxPhysicalPartitionAuditCount,
+		}
+		if err := requireAuditEventBound(base, maximum); err != nil {
+			return fmt.Errorf("table-statistics success audit bound: %w", err)
 		}
 	}
 	return nil

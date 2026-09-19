@@ -68,7 +68,7 @@ func TestObjectStatisticsSeparatesUnsupportedViewFromMissingResource(t *testing.
 			adapter := &statisticsTestAdapter{capabilities: []domain.Operation{domain.OperationDescribeObjectStatistics}, err: &database.Error{Kind: fixture.databaseKind}}
 			service, sink, closeManager := newStatisticsTestService(t, adapter, 4096)
 			defer closeManager()
-			_, err := service.DescribeObjectStatistics(context.Background(), "request", "client", "credential", "statistics", queryspec.ResourceRef{Schema: "app", Name: "orders"})
+			_, err := service.DescribeObjectStatistics(context.Background(), "request", "client", "credential", "statistics", "db", queryspec.ResourceRef{Schema: "app", Name: "orders"})
 			assertServiceErrorKind(t, err, fixture.serviceKind)
 			if adapter.statisticsCalls != 1 || len(sink.Events) != 2 || sink.Events[1].ErrorKind != "invalid" {
 				t.Fatalf("classification calls=%d audit=%+v", adapter.statisticsCalls, sink.Events)
@@ -88,8 +88,7 @@ func TestObjectStatisticsRejectsAdapterResponseOutsideOpenAPI(t *testing.T) {
 	service, sink, closeManager := newStatisticsTestService(t, adapter, 4096)
 	defer closeManager()
 	_, err := service.DescribeObjectStatistics(
-		context.Background(), "request", "client", "credential", "statistics",
-		queryspec.ResourceRef{Schema: "app", Name: "orders"},
+		context.Background(), "request", "client", "credential", "statistics", "db", queryspec.ResourceRef{Schema: "app", Name: "orders"},
 	)
 	assertServiceErrorKind(t, err, ErrorInternal)
 	if adapter.statisticsCalls != 1 || len(sink.Events) != 2 || sink.Events[0].Decision != "allow" ||
@@ -145,8 +144,7 @@ func TestObjectStatisticsChecksCapabilityBeforeDatasource(t *testing.T) {
 	service, sink, closeManager := newStatisticsTestService(t, adapter, 4096)
 	defer closeManager()
 	_, err := service.DescribeObjectStatistics(
-		context.Background(), "request", "client", "credential", "statistics",
-		queryspec.ResourceRef{Schema: "app", Name: "orders"},
+		context.Background(), "request", "client", "credential", "statistics", "db", queryspec.ResourceRef{Schema: "app", Name: "orders"},
 	)
 	assertServiceErrorKind(t, err, ErrorNotImplemented)
 	if adapter.semanticsCalls != 0 || adapter.statisticsCalls != 0 {
@@ -162,8 +160,7 @@ func TestObjectStatisticsRejectsInvalidCoordinatesBeforeDatasource(t *testing.T)
 	service, sink, closeManager := newStatisticsTestService(t, adapter, 4096)
 	defer closeManager()
 	_, err := service.DescribeObjectStatistics(
-		context.Background(), "request", "client", "credential", "statistics",
-		queryspec.ResourceRef{Schema: "bad-name", Name: "orders"},
+		context.Background(), "request", "client", "credential", "statistics", "db", queryspec.ResourceRef{Schema: "bad-name", Name: "orders"},
 	)
 	assertServiceErrorKind(t, err, ErrorInvalid)
 	if adapter.semanticsCalls != 0 || adapter.statisticsCalls != 0 || len(sink.Events) != 0 {
@@ -179,8 +176,7 @@ func TestObjectStatisticsDeniesUnassignedProfileBeforeDatasource(t *testing.T) {
 	service, sink, closeManager := newStatisticsTestService(t, adapter, 4096)
 	defer closeManager()
 	_, err := service.DescribeObjectStatistics(
-		context.Background(), "request", "client", "credential", "unassigned",
-		queryspec.ResourceRef{Schema: "app", Name: "orders"},
+		context.Background(), "request", "client", "credential", "unassigned", "db", queryspec.ResourceRef{Schema: "app", Name: "orders"},
 	)
 	assertServiceErrorKind(t, err, ErrorDenied)
 	if adapter.semanticsCalls != 0 || adapter.statisticsCalls != 0 || len(sink.Events) != 1 ||
@@ -197,8 +193,7 @@ func TestObjectStatisticsDenialAndEnvelopeOverflowDoNotReadResource(t *testing.T
 	service, sink, closeManager := newStatisticsTestService(t, adapter, 1)
 	defer closeManager()
 	_, err := service.DescribeObjectStatistics(
-		context.Background(), "denied", "client", "credential", "statistics",
-		queryspec.ResourceRef{Schema: "app", Name: "secret"},
+		context.Background(), "denied", "client", "credential", "statistics", "db", queryspec.ResourceRef{Schema: "app", Name: "secret"},
 	)
 	assertServiceErrorKind(t, err, ErrorNotFound)
 	if adapter.statisticsCalls != 0 || len(sink.Events) != 1 ||
@@ -208,8 +203,7 @@ func TestObjectStatisticsDenialAndEnvelopeOverflowDoNotReadResource(t *testing.T
 
 	sink.Events = nil
 	_, err = service.DescribeObjectStatistics(
-		context.Background(), "oversized", "client", "credential", "statistics",
-		queryspec.ResourceRef{Schema: "app", Name: "orders"},
+		context.Background(), "oversized", "client", "credential", "statistics", "db", queryspec.ResourceRef{Schema: "app", Name: "orders"},
 	)
 	assertServiceErrorKind(t, err, ErrorResultTooLarge)
 	if adapter.statisticsCalls != 0 || len(sink.Events) != 2 || sink.Events[0].Decision != "allow" ||
@@ -230,10 +224,10 @@ func newStatisticsTestService(
 	}
 	cfg := config.Config{
 		Version: 1, PolicyHash: "policy-hash", HardLimits: limits,
-		Principals:  map[string]config.Principal{"client": {Profiles: []string{"statistics"}}},
+		Principals:  map[string]config.Principal{"client": {Profiles: []string{"statistics"}, Datasources: []string{"db"}}},
 		Datasources: map[string]config.Datasource{"db": {Adapter: adapter.Name(), DSN: "opaque"}},
 		Profiles: map[string]config.Profile{"statistics": {
-			Datasource: "db", Operations: []domain.Operation{domain.OperationDescribeObjectStatistics},
+			Datasources: []string{"db"}, Operations: []domain.Operation{domain.OperationDescribeObjectStatistics},
 			Limits: limits,
 			Resources: config.ResourcePolicy{
 				Schemas: config.PatternPolicy{Allow: []string{"app"}},

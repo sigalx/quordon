@@ -33,6 +33,7 @@ principals:
       - query-explainer
       - data-reader
       - analytics
+    datasources: [primary-mysql]
 
 datasources:
   primary-mysql:
@@ -52,7 +53,7 @@ datasources:
 
 profiles:
   query-explainer:
-    datasource: primary-mysql
+    datasources: [primary-mysql]
     operations:
       - explain_select
     resources:
@@ -108,7 +109,7 @@ profiles:
       max_concurrency: 2
 
   data-reader:
-    datasource: primary-mysql
+    datasources: [primary-mysql]
     operations:
       - list_objects
       - describe_object
@@ -159,7 +160,7 @@ profiles:
       max_concurrency: 1
 
   analytics:
-    datasource: primary-mysql
+    datasources: [primary-mysql]
     operations:
       - aggregate
       - select_keyset

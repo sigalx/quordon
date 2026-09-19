@@ -108,7 +108,7 @@ func TestPolicyReferencesAtEveryLevelAndFingerprint(t *testing.T) {
 		{"profiles", "analytics", "query", "aggregate_shapes"},
 		{"profiles", "analytics", "query", "aggregate_shapes", "0"},
 		{"profiles", "analytics", "query", "keyset_select_shapes", "0"},
-		{"profiles", "analytics", "limits"}, {"profiles", "analytics", "datasource"},
+		{"profiles", "analytics", "limits"}, {"profiles", "analytics", "datasources"},
 		{"datasources", "primary-mysql", "tls_required"}, {"hard_limits", "max_rows"},
 	}
 	for _, path := range paths {
@@ -171,6 +171,87 @@ func TestPolicyReferencesAtEveryLevelAndFingerprint(t *testing.T) {
 	}
 }
 
+func TestReferencedProfileOverrideAllowsMultipleDatasourcesAndPreservesFingerprint(t *testing.T) {
+	data, err := os.ReadFile("../../config/policy.example.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var original, inlineDocument yaml.Node
+	if err := yaml.Unmarshal(data, &original); err != nil {
+		t.Fatal(err)
+	}
+	if err := yaml.Unmarshal(data, &inlineDocument); err != nil {
+		t.Fatal(err)
+	}
+	root := inlineDocument.Content[0]
+	datasources := mappingValue(root, "datasources")
+	primary := mappingValue(datasources, "primary-mysql")
+	primaryBytes, err := yaml.Marshal(primary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var secondaryDocument yaml.Node
+	if err := yaml.Unmarshal(primaryBytes, &secondaryDocument); err != nil {
+		t.Fatal(err)
+	}
+	datasources.Content = append(datasources.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "secondary-mysql"},
+		secondaryDocument.Content[0],
+	)
+	principalDatasources := mappingValue(
+		mappingValue(mappingValue(root, "principals"), "readonly-client"), "datasources",
+	)
+	principalDatasources.Content = append(principalDatasources.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "secondary-mysql"},
+	)
+	profile := mappingValue(mappingValue(root, "profiles"), "query-explainer")
+	profileDatasources := mappingValue(profile, "datasources")
+	profileDatasources.Content = append(profileDatasources.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "secondary-mysql"},
+	)
+	inlineBytes, err := yaml.Marshal(&inlineDocument)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inline, err := Load(inlineBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	baseProfile := mappingValue(mappingValue(original.Content[0], "profiles"), "query-explainer")
+	baseProfileBytes, err := yaml.Marshal(baseProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePolicyFile(t, dir, "query-explainer.yaml", string(baseProfileBytes))
+	var referencedDocument yaml.Node
+	if err := yaml.Unmarshal(inlineBytes, &referencedDocument); err != nil {
+		t.Fatal(err)
+	}
+	referencedProfile := mappingValue(mappingValue(referencedDocument.Content[0], "profiles"), "query-explainer")
+	var reference yaml.Node
+	if err := yaml.Unmarshal([]byte("$ref: './query-explainer.yaml'\n$override:\n  datasources: [primary-mysql, secondary-mysql]\n"), &reference); err != nil {
+		t.Fatal(err)
+	}
+	*referencedProfile = *reference.Content[0]
+	referencedBytes, err := yaml.Marshal(&referencedDocument)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := writePolicyFile(t, dir, "policy.yaml", string(referencedBytes))
+	referenced, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := referenced.Profiles["query-explainer"].Datasources; !reflect.DeepEqual(got, []string{"primary-mysql", "secondary-mysql"}) {
+		t.Fatalf("expanded profile datasources = %#v", got)
+	}
+	if inline.PolicyHash != referenced.PolicyHash || !reflect.DeepEqual(inline, referenced) {
+		t.Fatalf("referenced override changed effective policy: inline=%q referenced=%q", inline.PolicyHash, referenced.PolicyHash)
+	}
+}
+
 func indentYAML(s string, count int) string {
 	return strings.Repeat(" ", count) + strings.ReplaceAll(strings.TrimSuffix(s, "\n"), "\n", "\n"+strings.Repeat(" ", count)) + "\n"
 }
@@ -189,7 +270,7 @@ alias: &shared [anchored]
 ordinary: *shared
 `)
 	writePolicyFile(t, dir, "library/profile.yaml", `
-datasource: test
+datasources: [test]
 limits: {$ref: './base.yaml#/limits'}
 list: {$ref: './base.yaml#/list'}
 `)
@@ -199,7 +280,7 @@ original: {$ref: './library/profile.yaml'}
 rc:
   $ref: './library/profile.yaml'
   $override:
-    datasource: rc
+    datasources: [rc]
     list: [replacement]
     limits:
       $ref: './library/base.yaml#/limits'
@@ -236,7 +317,7 @@ alias: {$ref: './library/base.yaml#/ordinary/0'}
 	}
 	original := got["original"].(map[string]any)
 	rc := got["rc"].(map[string]any)
-	if original["datasource"] != "test" || rc["datasource"] != "rc" || len(rc["list"].([]any)) != 1 || !reflect.DeepEqual(rc["limits"], map[string]any{"rows": 7, "bytes": 20}) {
+	if !reflect.DeepEqual(original["datasources"], []any{"test"}) || !reflect.DeepEqual(rc["datasources"], []any{"rc"}) || len(rc["list"].([]any)) != 1 || !reflect.DeepEqual(rc["limits"], map[string]any{"rows": 7, "bytes": 20}) {
 		t.Fatal("override did not replace only direct fields")
 	}
 	if len(got["shallow"].(map[string]any)["limits"].(map[string]any)) != 1 {
@@ -534,7 +615,7 @@ func TestOverriddenProfilesAndSnapshotsHaveNoMutableAliases(t *testing.T) {
 	writePolicyFile(t, dir, "analytics.yaml", string(bytes))
 	*base = yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{{Kind: yaml.ScalarNode, Tag: "!!str", Value: "$ref"}, {Kind: yaml.ScalarNode, Tag: "!!str", Value: "./analytics.yaml"}}}
 	var rc yaml.Node
-	if err := yaml.Unmarshal([]byte("$ref: './analytics.yaml'\n$override: {datasource: primary-mysql}"), &rc); err != nil {
+	if err := yaml.Unmarshal([]byte("$ref: './analytics.yaml'\n$override: {datasources: [primary-mysql]}"), &rc); err != nil {
 		t.Fatal(err)
 	}
 	profiles.Content = append(profiles.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "rc"}, rc.Content[0])

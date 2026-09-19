@@ -9,7 +9,7 @@ import (
 )
 
 func TestDecodeStrictRejectsUnknownFields(t *testing.T) {
-	_, err := DecodeStrict([]byte(`{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"sql":"select 1"}}`), 8)
+	_, err := DecodeStrict([]byte(`{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"sql":"select 1"}}`), 8)
 	if err == nil {
 		t.Fatal("expected an unknown-field error")
 	}
@@ -21,13 +21,14 @@ func TestDecodeStrictRejectsCaseFoldedFields(t *testing.T) {
 		body string
 		key  string
 	}{
-		{name: "request", key: "Query", body: `{"profile":"p","Query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}]}}`},
-		{name: "query", key: "Projection", body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"Projection":[{"kind":"field","field":"id"}]}}`},
-		{name: "resource", key: "Schema", body: `{"profile":"p","query":{"source":{"Schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}]}}`},
-		{name: "selection", key: "Kind", body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"Kind":"field","field":"id"}]}}`},
-		{name: "filter", key: "Filter", body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"Filter":{"kind":"predicate","field":"id","operator":"is_null","values":[]}}}`},
-		{name: "typed value", key: "Type", body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"id","operator":"eq","values":[{"Type":"integer","value":1}]}}}`},
-		{name: "sort", key: "Direction", body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"order_by":[{"field":"id","Direction":"asc"}]}}`},
+		{name: "request", key: "Query", body: `{"profile":"p","datasource":"mysql","Query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}]}}`},
+		{name: "request datasource", key: "Datasource", body: `{"profile":"p","Datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}]}}`},
+		{name: "query", key: "Projection", body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"Projection":[{"kind":"field","field":"id"}]}}`},
+		{name: "resource", key: "Schema", body: `{"profile":"p","datasource":"mysql","query":{"source":{"Schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}]}}`},
+		{name: "selection", key: "Kind", body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"Kind":"field","field":"id"}]}}`},
+		{name: "filter", key: "Filter", body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"Filter":{"kind":"predicate","field":"id","operator":"is_null","values":[]}}}`},
+		{name: "typed value", key: "Type", body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"id","operator":"eq","values":[{"Type":"integer","value":1}]}}}`},
+		{name: "sort", key: "Direction", body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"order_by":[{"field":"id","Direction":"asc"}]}}`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -45,7 +46,7 @@ func TestDecodeStrictRejectsCaseFoldedExpressionsBeforeDepthValidation(t *testin
 	for range 8 {
 		filter = `{"kind":"group","operator":"and","Expressions":[` + filter + `,` + leaf + `]}`
 	}
-	body := `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":` + filter + `}}`
+	body := `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":` + filter + `}}`
 	_, err := DecodeStrict([]byte(body), 4)
 	if err == nil || !strings.Contains(err.Error(), `unknown field "Expressions"`) {
 		t.Fatalf("DecodeStrict() error = %v, want case-folded key rejection before tree decoding", err)
@@ -53,7 +54,7 @@ func TestDecodeStrictRejectsCaseFoldedExpressionsBeforeDepthValidation(t *testin
 }
 
 func TestDecodeStrictRejectsExactAndCaseFoldedDuplicateKeys(t *testing.T) {
-	body := `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}]},"Query":{"source":{"schema":"app","name":"secret"},"projection":[{"kind":"field","field":"password"}]}}`
+	body := `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}]},"Query":{"source":{"schema":"app","name":"secret"},"projection":[{"kind":"field","field":"password"}]}}`
 	_, err := DecodeStrict([]byte(body), 8)
 	if err == nil || !strings.Contains(err.Error(), `unknown field "Query"`) {
 		t.Fatalf("DecodeStrict() error = %v, want case-folded duplicate rejection", err)
@@ -69,37 +70,37 @@ func TestDecodeStrictRejectsDuplicateFields(t *testing.T) {
 		{
 			name: "request objects are not merged",
 			key:  "query",
-			body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"}},"query":{"projection":[{"kind":"field","field":"id"}]}}`,
+			body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"}},"query":{"projection":[{"kind":"field","field":"id"}]}}`,
 		},
 		{
 			name: "query",
 			key:  "source",
-			body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"source":{"schema":"app","name":"other"},"projection":[{"kind":"field","field":"id"}]}}`,
+			body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"source":{"schema":"app","name":"other"},"projection":[{"kind":"field","field":"id"}]}}`,
 		},
 		{
 			name: "resource",
 			key:  "schema",
-			body: `{"profile":"p","query":{"source":{"schema":"app","schema":"other","name":"orders"},"projection":[{"kind":"field","field":"id"}]}}`,
+			body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","schema":"other","name":"orders"},"projection":[{"kind":"field","field":"id"}]}}`,
 		},
 		{
 			name: "selection",
 			key:  "field",
-			body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id","field":"password"}]}}`,
+			body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id","field":"password"}]}}`,
 		},
 		{
 			name: "filter",
 			key:  "operator",
-			body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"id","operator":"eq","operator":"ne","values":[{"type":"integer","value":1}]}}}`,
+			body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"id","operator":"eq","operator":"ne","values":[{"type":"integer","value":1}]}}}`,
 		},
 		{
 			name: "typed value",
 			key:  "value",
-			body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"id","operator":"eq","values":[{"type":"integer","value":1,"value":2}]}}}`,
+			body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"id","operator":"eq","values":[{"type":"integer","value":1,"value":2}]}}}`,
 		},
 		{
 			name: "sort",
 			key:  "direction",
-			body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"order_by":[{"field":"id","direction":"asc","direction":"desc"}]}}`,
+			body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"order_by":[{"field":"id","direction":"asc","direction":"desc"}]}}`,
 		},
 	}
 	for _, test := range tests {
@@ -119,7 +120,7 @@ func TestDecodeStrictRejectsNullEnvelope(t *testing.T) {
 }
 
 func TestDecodeStrictRejectsInvalidUTF8(t *testing.T) {
-	body := []byte(`{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"status","operator":"eq","values":[{"type":"string","value":"active"}]}}}`)
+	body := []byte(`{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"status","operator":"eq","values":[{"type":"string","value":"active"}]}}}`)
 	body[bytes.Index(body, []byte("active"))] = 0xff
 	if _, err := DecodeStrict(body, 8); err == nil || !strings.Contains(err.Error(), "valid UTF-8") {
 		t.Fatalf("DecodeStrict() error = %v, want invalid UTF-8 error", err)
@@ -131,25 +132,29 @@ func TestDecodeStrictEnforcesRequiredAndDiscriminatorFields(t *testing.T) {
 		name string
 		body string
 	}{
-		{name: "missing profile", body: `{"query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}]}}`},
-		{name: "empty profile", body: `{"profile":"","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}]}}`},
-		{name: "missing query", body: `{"profile":"p"}`},
-		{name: "missing source", body: `{"profile":"p","query":{"projection":[{"kind":"field","field":"id"}]}}`},
-		{name: "missing projection", body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"}}}`},
-		{name: "field selection missing field", body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field"}]}}`},
-		{name: "field selection has empty alias", body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id","alias":""}]}}`},
-		{name: "field selection has empty aggregate property", body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id","function":""}]}}`},
-		{name: "aggregate missing function", body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"aggregate"}]}}`},
-		{name: "count aggregate has empty field", body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"aggregate","function":"count","field":""}]}}`},
-		{name: "aggregate has empty alias", body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"aggregate","function":"count","alias":""}]}}`},
-		{name: "predicate missing values", body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"id","operator":"eq"}}}`},
-		{name: "predicate has empty expressions", body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"id","operator":"is_null","values":[],"expressions":[]}}}`},
-		{name: "group has empty field", body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"group","field":"","operator":"and","expressions":[]}}}`},
-		{name: "sort missing direction", body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"order_by":[{"field":"id"}]}}`},
-		{name: "typed value missing value", body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"id","operator":"eq","values":[{"type":"integer"}]}}}`},
-		{name: "null filter", body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":null}}`},
-		{name: "null group by", body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"group_by":null}}`},
-		{name: "null order by", body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"order_by":null}}`},
+		{name: "missing profile", body: `{"datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}]}}`},
+		{name: "empty profile", body: `{"profile":"","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}]}}`},
+		{name: "missing datasource", body: `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}]}}`},
+		{name: "empty datasource", body: `{"profile":"p","datasource":"","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}]}}`},
+		{name: "null datasource", body: `{"profile":"p","datasource":null,"query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}]}}`},
+		{name: "numeric datasource", body: `{"profile":"p","datasource":1,"query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}]}}`},
+		{name: "missing query", body: `{"profile":"p","datasource":"mysql"}`},
+		{name: "missing source", body: `{"profile":"p","datasource":"mysql","query":{"projection":[{"kind":"field","field":"id"}]}}`},
+		{name: "missing projection", body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"}}}`},
+		{name: "field selection missing field", body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field"}]}}`},
+		{name: "field selection has empty alias", body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id","alias":""}]}}`},
+		{name: "field selection has empty aggregate property", body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id","function":""}]}}`},
+		{name: "aggregate missing function", body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"aggregate"}]}}`},
+		{name: "count aggregate has empty field", body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"aggregate","function":"count","field":""}]}}`},
+		{name: "aggregate has empty alias", body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"aggregate","function":"count","alias":""}]}}`},
+		{name: "predicate missing values", body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"id","operator":"eq"}}}`},
+		{name: "predicate has empty expressions", body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"id","operator":"is_null","values":[],"expressions":[]}}}`},
+		{name: "group has empty field", body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"group","field":"","operator":"and","expressions":[]}}}`},
+		{name: "sort missing direction", body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"order_by":[{"field":"id"}]}}`},
+		{name: "typed value missing value", body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"id","operator":"eq","values":[{"type":"integer"}]}}}`},
+		{name: "null filter", body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":null}}`},
+		{name: "null group by", body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"group_by":null}}`},
+		{name: "null order by", body: `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"order_by":null}}`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -162,7 +167,7 @@ func TestDecodeStrictEnforcesRequiredAndDiscriminatorFields(t *testing.T) {
 
 func TestDecodeStrictAcceptsDiscriminatorSpecificFields(t *testing.T) {
 	body := `{
-		"profile":"p",
+		"profile":"p","datasource":"mysql",
 		"query":{
 			"source":{"schema":"app","name":"orders"},
 			"projection":[{"kind":"aggregate","function":"count","alias":"total"}],
@@ -180,7 +185,7 @@ func TestDecodeStrictRejectsFilterDepthBeforeMaterializingTree(t *testing.T) {
 	for range 8 {
 		filter = `{"kind":"group","operator":"and","expressions":[` + filter + `,` + leaf + `]}`
 	}
-	body := `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":` + filter + `}}`
+	body := `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":` + filter + `}}`
 	if _, err := DecodeStrict([]byte(body), 4); err == nil || !strings.Contains(err.Error(), "expression depth") {
 		t.Fatalf("DecodeStrict() error = %v, want expression depth error", err)
 	}
@@ -188,34 +193,34 @@ func TestDecodeStrictRejectsFilterDepthBeforeMaterializingTree(t *testing.T) {
 
 func TestDecodeStrictEnforcesProtocolArrayBounds(t *testing.T) {
 	projection := strings.Repeat(`{"kind":"field","field":"id"},`, ProtocolMaxProjectionFields) + `{"kind":"field","field":"id"}`
-	body := `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[` + projection + `]}}`
+	body := `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[` + projection + `]}}`
 	if _, err := DecodeStrict([]byte(body), 8); err == nil || !strings.Contains(err.Error(), "protocol limit") {
 		t.Fatalf("projection DecodeStrict() error = %v, want protocol limit error", err)
 	}
 
 	value := `{"type":"integer","value":1}`
 	values := strings.Repeat(value+`,`, ProtocolMaxFilterItems) + value
-	body = `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"id","operator":"in","values":[` + values + `]}}}`
+	body = `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"id","operator":"in","values":[` + values + `]}}}`
 	if _, err := DecodeStrict([]byte(body), 8); err == nil || !strings.Contains(err.Error(), "protocol limit") {
 		t.Fatalf("values DecodeStrict() error = %v, want protocol limit error", err)
 	}
 
 	groupBy := strings.Repeat(`"id",`, ProtocolMaxGroupByFields) + `"id"`
-	body = `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"group_by":[` + groupBy + `]}}`
+	body = `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"group_by":[` + groupBy + `]}}`
 	if _, err := DecodeStrict([]byte(body), 8); err == nil || !strings.Contains(err.Error(), "protocol limit") {
 		t.Fatalf("group_by DecodeStrict() error = %v, want protocol limit error", err)
 	}
 
 	sort := `{"field":"id","direction":"asc"}`
 	orderBy := strings.Repeat(sort+`,`, ProtocolMaxOrderByFields) + sort
-	body = `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"order_by":[` + orderBy + `]}}`
+	body = `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"order_by":[` + orderBy + `]}}`
 	if _, err := DecodeStrict([]byte(body), 8); err == nil || !strings.Contains(err.Error(), "protocol limit") {
 		t.Fatalf("order_by DecodeStrict() error = %v, want protocol limit error", err)
 	}
 }
 
 func TestDecodeStrictEnforcesPublishedLimitAndOffsetBounds(t *testing.T) {
-	base := `{"profile":"p","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}]%s}}`
+	base := `{"profile":"p","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}]%s}}`
 	tests := []struct {
 		name     string
 		member   string
@@ -745,8 +750,8 @@ func TestValidateSimpleSelectAcceptsFieldsAndRejectsAggregatesAndGrouping(t *tes
 
 func TestDecodeStrictSelectMatchesSimpleSelectOpenAPIShape(t *testing.T) {
 	valid := []string{
-		`{"profile":"reader","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"order_by":[],"limit":10}}`,
-		`{"profile":"reader","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id","alias":"order_id"}],"filter":{"kind":"predicate","field":"status","operator":"eq","values":[{"type":"string","value":"active"}]},"order_by":[{"field":"id","direction":"desc"}]}}`,
+		`{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"order_by":[],"limit":10}}`,
+		`{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id","alias":"order_id"}],"filter":{"kind":"predicate","field":"status","operator":"eq","values":[{"type":"string","value":"active"}]},"order_by":[{"field":"id","direction":"desc"}]}}`,
 	}
 	for index, body := range valid {
 		if _, err := DecodeStrictSelect([]byte(body), 8); err != nil {
@@ -760,71 +765,71 @@ func TestDecodeStrictSelectMatchesSimpleSelectOpenAPIShape(t *testing.T) {
 	}{
 		{
 			name: "explicit empty group_by",
-			body: `{"profile":"reader","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"group_by":[]}}`,
+			body: `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"group_by":[]}}`,
 		},
 		{
 			name: "nonempty group_by",
-			body: `{"profile":"reader","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"group_by":["id"]}}`,
+			body: `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"group_by":["id"]}}`,
 		},
 		{
 			name: "aggregate branch",
-			body: `{"profile":"reader","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"aggregate","function":"count"}]}}`,
+			body: `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"aggregate","function":"count"}]}}`,
 		},
 		{
 			name: "function on field branch",
-			body: `{"profile":"reader","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id","function":"count"}]}}`,
+			body: `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id","function":"count"}]}}`,
 		},
 		{
 			name: "empty projection",
-			body: `{"profile":"reader","query":{"source":{"schema":"app","name":"orders"},"projection":[]}}`,
+			body: `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[]}}`,
 		},
 		{
 			name: "invalid source schema",
-			body: `{"profile":"reader","query":{"source":{"schema":"bad-name","name":"orders"},"projection":[{"kind":"field","field":"id"}]}}`,
+			body: `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"bad-name","name":"orders"},"projection":[{"kind":"field","field":"id"}]}}`,
 		},
 		{
 			name: "invalid source object",
-			body: `{"profile":"reader","query":{"source":{"schema":"app","name":"bad-name"},"projection":[{"kind":"field","field":"id"}]}}`,
+			body: `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"bad-name"},"projection":[{"kind":"field","field":"id"}]}}`,
 		},
 		{
 			name: "invalid projection field",
-			body: `{"profile":"reader","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"bad-name"}]}}`,
+			body: `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"bad-name"}]}}`,
 		},
 		{
 			name: "invalid projection alias",
-			body: `{"profile":"reader","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id","alias":"bad-name"}]}}`,
+			body: `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id","alias":"bad-name"}]}}`,
 		},
 		{
 			name: "invalid order field",
-			body: `{"profile":"reader","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"order_by":[{"field":"bad-name","direction":"asc"}]}}`,
+			body: `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"order_by":[{"field":"bad-name","direction":"asc"}]}}`,
 		},
 		{
 			name: "invalid order direction",
-			body: `{"profile":"reader","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"order_by":[{"field":"id","direction":"sideways"}]}}`,
+			body: `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"order_by":[{"field":"id","direction":"sideways"}]}}`,
 		},
 		{
 			name: "invalid predicate field",
-			body: `{"profile":"reader","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"bad-name","operator":"eq","values":[{"type":"integer","value":1}]}}}`,
+			body: `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"bad-name","operator":"eq","values":[{"type":"integer","value":1}]}}}`,
 		},
 		{
 			name: "invalid predicate operator",
-			body: `{"profile":"reader","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"id","operator":"sideways","values":[{"type":"integer","value":1}]}}}`,
+			body: `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"id","operator":"sideways","values":[{"type":"integer","value":1}]}}}`,
 		},
 		{
 			name: "invalid predicate cardinality",
-			body: `{"profile":"reader","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"id","operator":"eq","values":[]}}}`,
+			body: `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"id","operator":"eq","values":[]}}}`,
 		},
 		{
 			name: "invalid null predicate cardinality",
-			body: `{"profile":"reader","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"id","operator":"is_null","values":[{"type":"integer","value":1}]}}}`,
+			body: `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"id","operator":"is_null","values":[{"type":"integer","value":1}]}}}`,
 		},
 		{
 			name: "undersized filter group",
-			body: `{"profile":"reader","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"group","operator":"and","expressions":[{"kind":"predicate","field":"id","operator":"is_null","values":[]}]}}}`,
+			body: `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"group","operator":"and","expressions":[{"kind":"predicate","field":"id","operator":"is_null","values":[]}]}}}`,
 		},
 		{
 			name: "typed value token mismatch",
-			body: `{"profile":"reader","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"active","operator":"eq","values":[{"type":"boolean","value":"true"}]}}}`,
+			body: `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"active","operator":"eq","values":[{"type":"boolean","value":"true"}]}}}`,
 		},
 	}
 	for _, test := range invalid {
@@ -836,7 +841,7 @@ func TestDecodeStrictSelectMatchesSimpleSelectOpenAPIShape(t *testing.T) {
 	}
 
 	// The full QuerySpec used by EXPLAIN still permits grouping.
-	explainGrouped := `{"profile":"explain","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"group_by":[]}}`
+	explainGrouped := `{"profile":"explain","datasource":"mysql","query":{"source":{"schema":"app","name":"orders"},"projection":[{"kind":"field","field":"id"}],"group_by":[]}}`
 	if _, err := DecodeStrict([]byte(explainGrouped), 8); err != nil {
 		t.Fatalf("DecodeStrict(explain grouped) error = %v", err)
 	}

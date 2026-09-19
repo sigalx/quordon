@@ -10,7 +10,7 @@ import (
 	"github.com/sigalx/quordon/internal/queryspec"
 )
 
-const numericRequestFixture = `{"profile":"reader","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"numeric_bucket","field":"id","alias":"id_bucket"},{"kind":"measure","function":"count_all","alias":"bucket_count"}],"order_by":[{"kind":"numeric_bucket","alias":"id_bucket","direction":"asc"}],"limit":10}}`
+const numericRequestFixture = `{"profile":"reader","datasource":"mysql","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"numeric_bucket","field":"id","alias":"id_bucket"},{"kind":"measure","function":"count_all","alias":"bucket_count"}],"order_by":[{"kind":"numeric_bucket","alias":"id_bucket","direction":"asc"}],"limit":10}}`
 
 func TestNumericBucketRequestsMatchOpenAPIAndRuntime(t *testing.T) {
 	contract := loadOpenAPI31Validator(t)
@@ -85,17 +85,17 @@ func TestNumericBucketRequestCanBeBuiltFromDiscovery(t *testing.T) {
 	defer discoveryContract.Release()
 	server, _, closeDB := successfulContractServerWithOptions(t, false, false, true)
 	defer closeDB()
-	req := newContractRequest(http.MethodGet, "/query-shapes?profile=reader", "")
+	req := newContractRequest(http.MethodGet, "/query-shapes?profile=reader&datasource=mysql", "")
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, req)
 	if response.Code != 200 {
 		t.Fatalf("discovery=%s", response.Body)
 	}
-	valid, errs := discoveryContract.ValidateHttpResponse(newContractRequest(http.MethodGet, "/query-shapes?profile=reader", ""), response.Result())
+	valid, errs := discoveryContract.ValidateHttpResponse(newContractRequest(http.MethodGet, "/query-shapes?profile=reader&datasource=mysql", ""), response.Result())
 	if !valid {
 		t.Fatalf("discovery contract=%v", errs)
 	}
-	valid, errs = rootContract.ValidateHttpResponse(newContractRequest(http.MethodGet, "/query-shapes?profile=reader", ""), response.Result())
+	valid, errs = rootContract.ValidateHttpResponse(newContractRequest(http.MethodGet, "/query-shapes?profile=reader&datasource=mysql", ""), response.Result())
 	if !valid {
 		t.Fatalf("root discovery=%v", errs)
 	}
@@ -128,7 +128,7 @@ func TestNumericBucketRequestCanBeBuiltFromDiscovery(t *testing.T) {
 	query["projection"], _ = json.Marshal(projection)
 	query["limit"] = query["maximum_limit"]
 	delete(query, "maximum_limit")
-	body, err := json.Marshal(map[string]interface{}{"profile": "reader", "query": query})
+	body, err := json.Marshal(map[string]interface{}{"profile": "reader", "datasource": "mysql", "query": query})
 	if err != nil {
 		t.Fatal(err)
 	}

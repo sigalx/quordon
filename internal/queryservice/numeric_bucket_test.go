@@ -49,7 +49,7 @@ func numericServiceFixture() (config.Config, queryspec.AggregateRequest) {
 	cfg.Profiles["analytics"] = p
 	cfg.Authentication.Basic.Users = map[string]config.BasicUser{"credential": {Principal: "client"}}
 	limit := 5
-	return cfg, queryspec.AggregateRequest{Profile: "analytics", Query: queryspec.AggregateSpec{Mode: "grouped", Source: queryspec.ResourceRef{Schema: "app", Name: "orders"}, Projection: []queryspec.AggregateOutput{{Kind: "numeric_bucket", Field: "id", Alias: "id_bucket"}, {Kind: "measure", Function: "count_all", Alias: "total"}}, Limit: &limit}}
+	return cfg, queryspec.AggregateRequest{Profile: "analytics", Datasource: "db", Query: queryspec.AggregateSpec{Mode: "grouped", Source: queryspec.ResourceRef{Schema: "app", Name: "orders"}, Projection: []queryspec.AggregateOutput{{Kind: "numeric_bucket", Field: "id", Alias: "id_bucket"}, {Kind: "measure", Function: "count_all", Alias: "total"}}, Limit: &limit}}
 }
 
 func TestNumericCapabilityAbsenceBlocksExecutionAndFullDiscoveryWithoutCalls(t *testing.T) {
@@ -67,7 +67,7 @@ func TestNumericCapabilityAbsenceBlocksExecutionAndFullDiscoveryWithoutCalls(t *
 	}
 	_, err := service.Aggregate(context.Background(), "request", "query", "client", "credential", 1, request)
 	assertServiceErrorKind(t, err, ErrorNotImplemented)
-	payload, err := service.ListQueryShapes(context.Background(), "request", "client", "credential", "analytics")
+	payload, err := service.ListQueryShapes(context.Background(), "request", "client", "credential", "analytics", "db")
 	assertServiceErrorKind(t, err, ErrorNotImplemented)
 	if len(payload) != 0 || adapter.calls != 0 || adapter.semanticsCalls != 0 || len(service.queryShapes) != 0 {
 		t.Fatalf("partial disclosure or datasource calls: %s calls=%d semantics=%d", payload, adapter.calls, adapter.semanticsCalls)

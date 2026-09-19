@@ -58,7 +58,8 @@ grouped aggregate с обычной dimension и `count_all`; новая runtime
   `os.Root`, проверяет regular descriptors ровно `0600` и фиксированные budgets;
   inline `Load` поддерживает внутренние ссылки и не открывает внешние файлы;
 - после сборки выполняются строгие types/presence и semantic validation;
-  runtime получает обычный `Config`, один profile сохраняет один datasource;
+  runtime получает обычный `Config`; profile и principal содержат непустые
+  datasource allowlists, а runtime авторизует их пересечение;
 - fingerprint вычисляется по canonical redacted effective policy, независимо
   от путей и разбиения на файлы; diagnostics не раскрывают config values;
 - `--check-config` проверяет сборку и общую semantics без adapters, DB, HTTP
@@ -159,7 +160,7 @@ session и bounded cleanup выполняются на одном соедине
 API:
 
 ```text
-GET /query-shapes?profile={profile}
+GET /query-shapes?profile={profile}&datasource={datasource}
 ```
 
 Endpoint позволяет агенту узнать, какие запросы к
@@ -241,7 +242,7 @@ Policy-curated dimension для временной группировки име
 API:
 
 ```text
-GET /schemas/{schema}/objects/{object}/statistics?profile={profile}
+GET /schemas/{schema}/objects/{object}/statistics?profile={profile}&datasource={datasource}
 ```
 
 Ответ включает:
@@ -284,6 +285,7 @@ GET /schemas/{schema}/objects/{object}/statistics?profile={profile}
 {
   "kind": "keyset",
   "profile": "reader",
+  "datasource": "primary-mysql",
   "shape": "records_by_id",
   "query": {
     "source": {"schema": "application", "name": "records"},
@@ -337,7 +339,8 @@ GET /schemas/{schema}/objects/{object}/statistics?profile={profile}
 - response возвращает закрытый тип `next_cursor` и однозначный `has_more`, не
   раскрывая имя индекса или иные execution-only параметры;
 - расширение `POST /queries/select` моделируется непересекающимся `oneOf`:
-  существующие `{profile, query}` request/response остаются валидными, а новая
+  legacy `{profile, datasource, query}` и keyset request/response остаются
+  различимыми, а keyset
   ветка однозначно выбирается обязательным `kind: keyset`;
 - handler сохраняет выбранную request-ветку в типизированном dispatch:
   legacy request может вернуть только `SelectResult`, keyset request — только

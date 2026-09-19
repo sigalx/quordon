@@ -23,8 +23,9 @@ const (
 )
 
 type AggregateRequest struct {
-	Profile string        `json:"profile"`
-	Query   AggregateSpec `json:"query"`
+	Profile    string        `json:"profile"`
+	Datasource string        `json:"datasource"`
+	Query      AggregateSpec `json:"query"`
 }
 
 type AggregateSpec struct {

@@ -15,7 +15,7 @@ func TestAuthorizeKeysetSelectMintsImmutableOperationBoundToken(t *testing.T) {
 	semantics := domain.IdentifierSemantics{
 		CaseInsensitiveSchemas: true, CaseInsensitiveObjects: true, CaseInsensitiveFields: true,
 	}
-	token, err := snapshot.AuthorizeKeysetSelect("client", "basic-user", "reader", "mysql8", validated, semantics)
+	token, err := snapshot.AuthorizeKeysetSelect(bindingForTest(t, snapshot, "client", "reader", "mysql", domain.OperationSelectKeyset), "basic-user", "mysql8", validated, semantics)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,21 +45,22 @@ func TestKeysetWorkControlsAreImmutableAndBoundToAuthorization(t *testing.T) {
 	profile.Query.KeysetSelectShapes[0].AllowFilesort = &allowFilesort
 	snapshot = NewSnapshot(config.Config{
 		Version: 1, HardLimits: snapshot.HardLimits(),
-		Principals: map[string]config.Principal{"client": {Profiles: []string{"reader"}}},
+		Principals: map[string]config.Principal{"client": {Profiles: []string{"reader"}, Datasources: []string{"mysql"}}},
 		Profiles:   map[string]config.Profile{"reader": profile},
 	})
 	allowTemporary, allowFilesort = false, true
 	returned, _ := snapshot.Profile("reader")
 	*returned.Query.KeysetSelectShapes[0].AllowTemporaryTable = false
 	*returned.Query.KeysetSelectShapes[0].AllowFilesort = true
-	token, err := snapshot.AuthorizeKeysetSelect("client", "basic-user", "reader", "mysql8", validateKeysetForPolicy(t, 5), domain.IdentifierSemantics{CaseInsensitiveSchemas: true, CaseInsensitiveObjects: true, CaseInsensitiveFields: true})
+	token, err := snapshot.AuthorizeKeysetSelect(bindingForTest(t, snapshot, "client", "reader", "mysql", domain.OperationSelectKeyset), "basic-user", "mysql8", validateKeysetForPolicy(t, 5), domain.IdentifierSemantics{CaseInsensitiveSchemas: true, CaseInsensitiveObjects: true, CaseInsensitiveFields: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !token.AllowTemporaryTable() || token.AllowFilesort() {
 		t.Fatal("work controls changed through mutable aliases")
 	}
-	defaultToken, err := keysetPolicySnapshot().AuthorizeKeysetSelect("client", "basic-user", "reader", "mysql8", validateKeysetForPolicy(t, 5), domain.IdentifierSemantics{CaseInsensitiveSchemas: true, CaseInsensitiveObjects: true, CaseInsensitiveFields: true})
+	defaultSnapshot := keysetPolicySnapshot()
+	defaultToken, err := defaultSnapshot.AuthorizeKeysetSelect(bindingForTest(t, defaultSnapshot, "client", "reader", "mysql", domain.OperationSelectKeyset), "basic-user", "mysql8", validateKeysetForPolicy(t, 5), domain.IdentifierSemantics{CaseInsensitiveSchemas: true, CaseInsensitiveObjects: true, CaseInsensitiveFields: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,17 +75,15 @@ func TestAuthorizeKeysetSelectRejectsShapeMismatchBeforeMintingToken(t *testing.
 	request := validated.Request()
 	request.Shape = "unknown_shape"
 	invalid, err := queryspec.ValidateKeyset(queryspec.KeysetRequest{
-		Kind: "keyset", Profile: request.Profile, Shape: request.Shape, Query: request.Query, Page: request.Page,
+		Kind: "keyset", Profile: request.Profile, Datasource: request.Datasource, Shape: request.Shape, Query: request.Query, Page: request.Page,
 	}, 10, 8, 10, 4, 20, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := snapshot.PrecheckKeysetSelect("client", "reader", invalid); err == nil {
+	if err := snapshot.PrecheckKeysetSelect(bindingForTest(t, snapshot, "client", "reader", "mysql", domain.OperationSelectKeyset), invalid); err == nil {
 		t.Fatal("unknown keyset shape passed the semantics-independent policy check")
 	}
-	if _, err := snapshot.AuthorizeKeysetSelect(
-		"client", "basic-user", "reader", "mysql8", invalid, domain.IdentifierSemantics{},
-	); err == nil {
+	if _, err := snapshot.AuthorizeKeysetSelect(bindingForTest(t, snapshot, "client", "reader", "mysql", domain.OperationSelectKeyset), "basic-user", "mysql8", invalid, domain.IdentifierSemantics{}); err == nil {
 		t.Fatal("unknown keyset shape minted an authorization token")
 	}
 }
@@ -102,7 +101,7 @@ func TestPrecheckKeysetSelectCanonicalizesCommutativeFilterOrder(t *testing.T) {
 		RequiredIndex: "PRIMARY", MaximumRowsExaminedPerScan: 100,
 	}
 	request := queryspec.KeysetRequest{
-		Kind: "keyset", Profile: "reader", Shape: shape.Name,
+		Kind: "keyset", Profile: "reader", Datasource: "mysql", Shape: shape.Name,
 		Query: queryspec.KeysetSpec{
 			Source:     queryspec.ResourceRef{Schema: "app", Name: "orders"},
 			Projection: []queryspec.Selection{{Kind: "field", Field: "id"}},
@@ -133,9 +132,9 @@ func keysetPolicySnapshot() *Snapshot {
 	valueTypes := []string{"string"}
 	return NewSnapshot(config.Config{
 		Version: 2, PolicyHash: "redacted-policy-hash", HardLimits: limits,
-		Principals: map[string]config.Principal{"client": {Profiles: []string{"reader"}}},
+		Principals: map[string]config.Principal{"client": {Profiles: []string{"reader"}, Datasources: []string{"mysql"}}},
 		Profiles: map[string]config.Profile{"reader": {
-			Datasource: "mysql", Operations: []domain.Operation{domain.OperationSelectKeyset}, Limits: limits,
+			Datasources: []string{"mysql"}, Operations: []domain.Operation{domain.OperationSelectKeyset}, Limits: limits,
 			Resources: config.ResourcePolicy{
 				Schemas: config.PatternPolicy{Allow: []string{"app"}},
 				Objects: config.PatternPolicy{Allow: []string{"app.orders"}},
@@ -162,7 +161,7 @@ func keysetPolicySnapshot() *Snapshot {
 func validateKeysetForPolicy(t *testing.T, limit int) queryspec.ValidatedKeyset {
 	t.Helper()
 	request := queryspec.KeysetRequest{
-		Kind: "keyset", Profile: "reader", Shape: "orders_by_id",
+		Kind: "keyset", Profile: "reader", Datasource: "mysql", Shape: "orders_by_id",
 		Query: queryspec.KeysetSpec{
 			Source: queryspec.ResourceRef{Schema: "APP", Name: "ORDERS"},
 			Projection: []queryspec.Selection{

@@ -10,11 +10,12 @@ import (
 )
 
 type keysetRequestWire struct {
-	Kind    wireString      `json:"kind"`
-	Profile wireString      `json:"profile"`
-	Shape   wireString      `json:"shape"`
-	Query   *keysetSpecWire `json:"query"`
-	Page    *keysetPageWire `json:"page"`
+	Kind       wireString      `json:"kind"`
+	Profile    wireString      `json:"profile"`
+	Datasource wireString      `json:"datasource"`
+	Shape      wireString      `json:"shape"`
+	Query      *keysetSpecWire `json:"query"`
+	Page       *keysetPageWire `json:"page"`
 }
 
 type keysetSpecWire struct {
@@ -87,6 +88,9 @@ func DecodeStrictKeyset(
 	if !wire.Profile.Set || wire.Profile.Value == "" {
 		return KeysetRequest{}, errors.New("profile is required and must not be empty")
 	}
+	if !wire.Datasource.Set || wire.Datasource.Value == "" {
+		return KeysetRequest{}, errors.New("datasource is required and must not be empty")
+	}
 	if !wire.Shape.Set || wire.Shape.Value == "" {
 		return KeysetRequest{}, errors.New("shape is required and must not be empty")
 	}
@@ -102,7 +106,8 @@ func DecodeStrictKeyset(
 		return KeysetRequest{}, err
 	}
 	request := KeysetRequest{
-		Kind: "keyset", Profile: wire.Profile.Value, Shape: wire.Shape.Value, Query: query, Page: page,
+		Kind: "keyset", Profile: wire.Profile.Value, Datasource: wire.Datasource.Value,
+		Shape: wire.Shape.Value, Query: query, Page: page,
 	}
 	if _, err := ValidateKeyset(
 		request, ProtocolMaxProjectionFields, ProtocolMaxKeysetFields,
@@ -196,7 +201,7 @@ func detectKeysetSelectBranch(data []byte, maxDepth, maxPredicates, maxParameter
 	if !ok || delimiter != '{' {
 		return false, errors.New("request body must contain a JSON object")
 	}
-	seen := make(map[string]struct{}, 5)
+	seen := make(map[string]struct{}, 6)
 	budget := newFilterShapeScanBudget(maxPredicates, maxParameters)
 	kindSeen := false
 	keyset := false
@@ -217,7 +222,7 @@ func detectKeysetSelectBranch(data []byte, maxDepth, maxPredicates, maxParameter
 				return false, errors.New("kind must be keyset when present")
 			}
 			keyset = true
-		case "profile", "shape":
+		case "profile", "datasource", "shape":
 			if err := skipJSONValue(decoder); err != nil {
 				return false, err
 			}
@@ -285,7 +290,7 @@ func scanKeysetRequestShape(data []byte, maxDepth, maxPredicates, maxParameters 
 	if !ok || delimiter != '{' {
 		return nil
 	}
-	seen := make(map[string]struct{}, 5)
+	seen := make(map[string]struct{}, 6)
 	budget := newFilterShapeScanBudget(maxPredicates, maxParameters)
 	cursorCount := 0
 	for decoder.More() {
@@ -294,7 +299,7 @@ func scanKeysetRequestShape(data []byte, maxDepth, maxPredicates, maxParameters 
 			return err
 		}
 		switch key {
-		case "kind", "profile", "shape":
+		case "kind", "profile", "datasource", "shape":
 			err = skipJSONValue(decoder)
 		case "query":
 			err = scanKeysetQueryShape(decoder, maxDepth, budget)

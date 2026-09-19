@@ -17,6 +17,17 @@ import (
 	"github.com/sigalx/quordon/internal/secrets"
 )
 
+func databaseBindingForTest(
+	t testing.TB, snapshot *policy.Snapshot, principal, profile string, operation domain.Operation,
+) policy.AuthorizedBinding {
+	t.Helper()
+	binding, err := snapshot.AuthorizeBinding(principal, profile, "mysql", operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return binding
+}
+
 type incompleteCapabilityAdapter struct {
 	name         string
 	capabilities []domain.Operation
@@ -268,9 +279,9 @@ func TestManagerRequiresAdvertisedCapabilityBeforeAdapterAction(t *testing.T) {
 	}
 	snapshot := policy.NewSnapshot(config.Config{
 		HardLimits: limits,
-		Principals: map[string]config.Principal{"client": {Profiles: []string{"all"}}},
+		Principals: map[string]config.Principal{"client": {Profiles: []string{"all"}, Datasources: []string{"mysql"}}},
 		Profiles: map[string]config.Profile{"all": {
-			Datasource: "mysql", Limits: limits,
+			Datasources: []string{"mysql"}, Limits: limits,
 			Operations: []domain.Operation{
 				domain.OperationListObjects, domain.OperationDescribeObject,
 				domain.OperationDescribeObjectStatistics, domain.OperationExplainSelect,
@@ -295,13 +306,11 @@ func TestManagerRequiresAdvertisedCapabilityBeforeAdapterAction(t *testing.T) {
 		}},
 	})
 	semantics := domain.IdentifierSemantics{}
-	listToken, err := snapshot.AuthorizeListObjects("client", "all", "app", semantics)
+	listToken, err := snapshot.AuthorizeListObjects(databaseBindingForTest(t, snapshot, "client", "all", domain.OperationListObjects), "app", semantics)
 	if err != nil {
 		t.Fatal(err)
 	}
-	describeToken, err := snapshot.AuthorizeDescribeObject(
-		"client", "all", queryspec.ResourceRef{Schema: "app", Name: "orders"}, semantics,
-	)
+	describeToken, err := snapshot.AuthorizeDescribeObject(databaseBindingForTest(t, snapshot, "client", "all", domain.OperationDescribeObject), queryspec.ResourceRef{Schema: "app", Name: "orders"}, semantics)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,11 +321,11 @@ func TestManagerRequiresAdvertisedCapabilityBeforeAdapterAction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	explainToken, err := snapshot.AuthorizeExplain("client", "all", validated, semantics)
+	explainToken, err := snapshot.AuthorizeExplain(databaseBindingForTest(t, snapshot, "client", "all", domain.OperationExplainSelect), validated, semantics)
 	if err != nil {
 		t.Fatal(err)
 	}
-	selectToken, err := snapshot.AuthorizeSelect("client", "all", validated, semantics)
+	selectToken, err := snapshot.AuthorizeSelect(databaseBindingForTest(t, snapshot, "client", "all", domain.OperationSelect), validated, semantics)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,12 +339,11 @@ func TestManagerRequiresAdvertisedCapabilityBeforeAdapterAction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	aggregateToken, err := snapshot.AuthorizeAggregate("client", "all", aggregateValidated, semantics)
+	aggregateToken, err := snapshot.AuthorizeAggregate(databaseBindingForTest(t, snapshot, "client", "all", domain.OperationAggregate), aggregateValidated, semantics)
 	if err != nil {
 		t.Fatal(err)
 	}
-	statisticsToken, err := snapshot.AuthorizeObjectStatistics(
-		"client", "credential", "all", adapter.Name(),
+	statisticsToken, err := snapshot.AuthorizeObjectStatistics(databaseBindingForTest(t, snapshot, "client", "all", domain.OperationDescribeObjectStatistics), "credential", adapter.Name(),
 		queryspec.ResourceRef{Schema: "app", Name: "orders"}, semantics,
 	)
 	if err != nil {
@@ -387,16 +395,16 @@ func TestManagerRejectsMissingOrWrongMetadataAuthorization(t *testing.T) {
 	}
 
 	snapshot := policy.NewSnapshot(config.Config{
-		Principals: map[string]config.Principal{"client": {Profiles: []string{"metadata"}}},
+		Principals: map[string]config.Principal{"client": {Profiles: []string{"metadata"}, Datasources: []string{"mysql"}}},
 		Profiles: map[string]config.Profile{"metadata": {
-			Datasource: "mysql", Operations: []domain.Operation{domain.OperationListObjects},
+			Datasources: []string{"mysql"}, Operations: []domain.Operation{domain.OperationListObjects},
 			Resources: config.ResourcePolicy{
 				Schemas: config.PatternPolicy{Allow: []string{"app"}},
 				Objects: config.PatternPolicy{Allow: []string{"app.*"}},
 			},
 		}},
 	})
-	list, err := snapshot.AuthorizeListObjects("client", "metadata", "app", domain.IdentifierSemantics{})
+	list, err := snapshot.AuthorizeListObjects(databaseBindingForTest(t, snapshot, "client", "metadata", domain.OperationListObjects), "app", domain.IdentifierSemantics{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -432,9 +440,9 @@ func TestManagerRejectsMissingOrWrongQueryAuthorization(t *testing.T) {
 		MaxRows: 10, MaxResultBytes: 1000, MaxOffset: 10, MaxConcurrency: 1}
 	snapshot := policy.NewSnapshot(config.Config{
 		HardLimits: limits,
-		Principals: map[string]config.Principal{"client": {Profiles: []string{"both"}}},
+		Principals: map[string]config.Principal{"client": {Profiles: []string{"both"}, Datasources: []string{"mysql"}}},
 		Profiles: map[string]config.Profile{"both": {
-			Datasource: "mysql", Limits: limits,
+			Datasources: []string{"mysql"}, Limits: limits,
 			Operations: []domain.Operation{domain.OperationExplainSelect, domain.OperationSelect},
 			Resources: config.ResourcePolicy{
 				Schemas: config.PatternPolicy{Allow: []string{"app"}},
@@ -450,14 +458,14 @@ func TestManagerRejectsMissingOrWrongQueryAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	explainToken, err := snapshot.AuthorizeExplain("client", "both", validated, domain.IdentifierSemantics{})
+	explainToken, err := snapshot.AuthorizeExplain(databaseBindingForTest(t, snapshot, "client", "both", domain.OperationExplainSelect), validated, domain.IdentifierSemantics{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := manager.Select(context.Background(), explainToken); !database.IsKind(err, database.ErrorUpstream) {
 		t.Fatalf("explain token used for select error = %v, want upstream programming error", err)
 	}
-	selectToken, err := snapshot.AuthorizeSelect("client", "both", validated, domain.IdentifierSemantics{})
+	selectToken, err := snapshot.AuthorizeSelect(databaseBindingForTest(t, snapshot, "client", "both", domain.OperationSelect), validated, domain.IdentifierSemantics{})
 	if err != nil {
 		t.Fatal(err)
 	}

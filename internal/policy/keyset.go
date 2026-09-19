@@ -66,14 +66,10 @@ func (a AuthorizedKeysetSelect) ReferencedFields() []string {
 // datasource's identifier semantics. It deliberately mints no authorization
 // token and performs no external work.
 func (s *Snapshot) PrecheckKeysetSelect(
-	principal, profileName string, query queryspec.ValidatedKeyset,
+	binding AuthorizedBinding, query queryspec.ValidatedKeyset,
 ) error {
-	principalConfig, ok := s.principals[principal]
-	if !ok || !slices.Contains(principalConfig.Profiles, profileName) {
-		return &Denial{ReasonCode: ReasonDeniedOperation}
-	}
-	profile, ok := s.profiles[profileName]
-	if !ok || !slices.Contains(profile.Operations, domain.OperationSelectKeyset) {
+	profile, err := s.profileForBinding(binding, domain.OperationSelectKeyset)
+	if err != nil {
 		return &Denial{ReasonCode: ReasonDeniedOperation}
 	}
 	effective := s.hardLimits.Min(profile.Limits)
@@ -96,17 +92,17 @@ func (s *Snapshot) PrecheckKeysetSelect(
 }
 
 func (s *Snapshot) AuthorizeKeysetSelect(
-	principal, credentialIdentifier, profileName, adapterName string,
+	binding AuthorizedBinding, credentialIdentifier, adapterName string,
 	query queryspec.ValidatedKeyset,
 	semantics domain.IdentifierSemantics,
 ) (AuthorizedKeysetSelect, error) {
-	if principal == "" || credentialIdentifier == "" || profileName == "" || adapterName == "" {
+	if binding.Principal() == "" || credentialIdentifier == "" || binding.Profile() == "" || adapterName == "" {
 		return AuthorizedKeysetSelect{}, &Denial{ReasonCode: ReasonDeniedOperation}
 	}
-	if err := s.PrecheckKeysetSelect(principal, profileName, query); err != nil {
+	if err := s.PrecheckKeysetSelect(binding, query); err != nil {
 		return AuthorizedKeysetSelect{}, err
 	}
-	profile := s.profiles[profileName]
+	profile := s.profiles[binding.Profile()]
 	effective := s.hardLimits.Min(profile.Limits)
 	revalidated, err := queryspec.RevalidateKeyset(
 		query, effective.MaxProjectionFields, effective.MaxOrderByFields,
@@ -146,14 +142,14 @@ func (s *Snapshot) AuthorizeKeysetSelect(
 		return AuthorizedKeysetSelect{}, err
 	}
 	generationInput := fmt.Sprintf(
-		"%s\x00%s\x00%s\x00%t%t%t", s.hash, profileName, adapterName,
+		"%s\x00%s\x00%s\x00%s\x00%t%t%t", s.hash, binding.Profile(), binding.Datasource(), adapterName,
 		semantics.CaseInsensitiveSchemas, semantics.CaseInsensitiveObjects, semantics.CaseInsensitiveFields,
 	)
 	generation := sha256.Sum256([]byte(generationInput))
 	return AuthorizedKeysetSelect{
-		owner: s, principal: principal, credentialIdentifier: credentialIdentifier,
-		profile: profileName, policyVersion: s.version, policyHash: s.hash,
-		datasource: profile.Datasource, adapter: adapterName, operation: domain.OperationSelectKeyset,
+		owner: s, principal: binding.Principal(), credentialIdentifier: credentialIdentifier,
+		profile: binding.Profile(), policyVersion: s.version, policyHash: s.hash,
+		datasource: binding.Datasource(), adapter: adapterName, operation: domain.OperationSelectKeyset,
 		limits: effective, query: normalized, requiredIndex: shape.RequiredIndex,
 		maximumRowsExaminedPerScan: shape.MaximumRowsExaminedPerScan,
 		allowTemporaryTable:        shape.AllowTemporaryTable != nil && *shape.AllowTemporaryTable,

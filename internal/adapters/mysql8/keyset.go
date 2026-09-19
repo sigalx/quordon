@@ -1413,6 +1413,7 @@ func keysetContinuationRequestFits(
 		return ok && add(encoded)
 	}
 	if !add(len(`{"kind":"keyset","profile":`)) || !addString(request.Profile) ||
+		!add(len(`,"datasource":`)) || !addString(request.Datasource) ||
 		!add(len(`,"shape":`)) || !addString(request.Shape) ||
 		!add(len(`,"query":{"source":{"schema":`)) || !addString(request.Query.Source.Schema) ||
 		!add(len(`,"name":`)) || !addString(request.Query.Source.Name) ||

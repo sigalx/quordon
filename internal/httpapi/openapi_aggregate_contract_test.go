@@ -99,7 +99,7 @@ func TestAggregateContractRejectsDuplicateFilterExpressions(t *testing.T) {
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			body := `{
-				"profile":"analytics",
+				"profile":"analytics","datasource":"mysql",
 				"query":{
 					"mode":"scalar",
 					"source":{"schema":"application","name":"employees"},

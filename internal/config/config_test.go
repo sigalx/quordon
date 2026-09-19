@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -25,7 +26,7 @@ func TestExamplePolicyLoads(t *testing.T) {
 	if cfg.Server.Listen != "127.0.0.1:8080" {
 		t.Fatalf("example listen address = %q", cfg.Server.Listen)
 	}
-	if cfg.Profiles["query-explainer"].Datasource != "primary-mysql" {
+	if !slices.Equal(cfg.Profiles["query-explainer"].Datasources, []string{"primary-mysql"}) {
 		t.Fatal("example profile was not decoded")
 	}
 	analytics := cfg.Profiles["analytics"]
@@ -34,6 +35,139 @@ func TestExamplePolicyLoads(t *testing.T) {
 		!slices.Contains(analytics.Operations, domain.OperationListQueryShapes) ||
 		len(analytics.Query.AggregateShapes) != 2 || len(analytics.Query.KeysetSelectShapes) != 1 {
 		t.Fatalf("example aggregate profile = %+v", analytics)
+	}
+}
+
+func TestDatasourceAssignmentsAreRequiredStrictLists(t *testing.T) {
+	templateBytes, err := os.ReadFile("../../config/policy.example.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := string(templateBytes)
+	principalField := "    datasources: [primary-mysql]\n"
+	profileField := "  query-explainer:\n    datasources: [primary-mysql]\n"
+	fixtures := []struct {
+		name, old, replacement string
+	}{
+		{name: "missing principal datasources", old: principalField, replacement: ""},
+		{name: "null principal datasources", old: principalField, replacement: "    datasources: null\n"},
+		{name: "scalar principal datasource", old: principalField, replacement: "    datasources: primary-mysql\n"},
+		{name: "empty principal datasources", old: principalField, replacement: "    datasources: []\n"},
+		{name: "missing profile datasources", old: profileField, replacement: "  query-explainer:\n"},
+		{name: "null profile datasources", old: profileField, replacement: "  query-explainer:\n    datasources: null\n"},
+		{name: "scalar profile datasources", old: profileField, replacement: "  query-explainer:\n    datasources: primary-mysql\n"},
+		{name: "empty profile datasources", old: profileField, replacement: "  query-explainer:\n    datasources: []\n"},
+		{name: "legacy profile datasource", old: profileField, replacement: "  query-explainer:\n    datasource: primary-mysql\n"},
+	}
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			candidate := strings.Replace(template, fixture.old, fixture.replacement, 1)
+			if candidate == template {
+				t.Fatalf("fixture insertion point %q was not found", fixture.old)
+			}
+			if _, err := Load([]byte(candidate)); err == nil {
+				t.Fatal("invalid datasource assignment was accepted")
+			}
+		})
+	}
+}
+
+func TestDatasourceAssignmentValidationAndFingerprint(t *testing.T) {
+	loadExample := func(t *testing.T) Config {
+		t.Helper()
+		data, err := os.ReadFile("../../config/policy.example.yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Load(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cfg
+	}
+	for _, fixture := range []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{name: "duplicate principal datasource", mutate: func(cfg *Config) {
+			principal := cfg.Principals["readonly-client"]
+			principal.Datasources = []string{"primary-mysql", "primary-mysql"}
+			cfg.Principals["readonly-client"] = principal
+		}},
+		{name: "unknown principal datasource", mutate: func(cfg *Config) {
+			principal := cfg.Principals["readonly-client"]
+			principal.Datasources = []string{"unknown"}
+			cfg.Principals["readonly-client"] = principal
+		}},
+		{name: "duplicate profile datasource", mutate: func(cfg *Config) {
+			profile := cfg.Profiles["query-explainer"]
+			profile.Datasources = []string{"primary-mysql", "primary-mysql"}
+			cfg.Profiles["query-explainer"] = profile
+		}},
+		{name: "unknown profile datasource", mutate: func(cfg *Config) {
+			profile := cfg.Profiles["query-explainer"]
+			profile.Datasources = []string{"unknown"}
+			cfg.Profiles["query-explainer"] = profile
+		}},
+		{name: "no principal profile intersection", mutate: func(cfg *Config) {
+			secondary := cfg.Datasources["primary-mysql"]
+			cfg.Datasources["secondary-mysql"] = secondary
+			profile := cfg.Profiles["query-explainer"]
+			profile.Datasources = []string{"secondary-mysql"}
+			cfg.Profiles["query-explainer"] = profile
+		}},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			cfg := loadExample(t)
+			fixture.mutate(&cfg)
+			if err := cfg.Validate(); err == nil {
+				t.Fatal("invalid datasource assignment was accepted")
+			}
+		})
+	}
+
+	cfg := loadExample(t)
+	secondary := cfg.Datasources["primary-mysql"]
+	cfg.Datasources["secondary-mysql"] = secondary
+	principal := cfg.Principals["readonly-client"]
+	principal.Datasources = append(principal.Datasources, "secondary-mysql")
+	cfg.Principals["readonly-client"] = principal
+	profile := cfg.Profiles["query-explainer"]
+	profile.Datasources = append(profile.Datasources, "secondary-mysql")
+	cfg.Profiles["query-explainer"] = profile
+	changed, err := policyFingerprint(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed == cfg.PolicyHash {
+		t.Fatal("datasource assignment did not change the policy fingerprint")
+	}
+}
+
+func TestProfileDatasourceBindingLimit(t *testing.T) {
+	data, err := os.ReadFile("../../config/policy.example.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := cfg.Profiles["query-explainer"]
+	profile.Datasources = make([]string, maxSupportedBindings+1)
+	principal := cfg.Principals["readonly-client"]
+	principal.Datasources = []string{"primary-mysql"}
+	base := cfg.Datasources["primary-mysql"]
+	for index := range profile.Datasources {
+		name := fmt.Sprintf("source-%d", index)
+		profile.Datasources[index] = name
+		principal.Datasources = append(principal.Datasources, name)
+		cfg.Datasources[name] = base
+	}
+	cfg.Profiles["query-explainer"] = profile
+	cfg.Principals["readonly-client"] = principal
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "profile-datasource bindings") {
+		t.Fatalf("binding limit error = %v", err)
 	}
 }
 

@@ -7,7 +7,7 @@ import (
 )
 
 const validKeysetRequestJSON = `{
-	"kind":"keyset","profile":"reader","shape":"orders_by_id",
+	"kind":"keyset","profile":"reader","datasource":"mysql","shape":"orders_by_id",
 	"query":{
 		"source":{"schema":"application","name":"orders"},
 		"projection":[{"kind":"field","field":"id"},{"kind":"field","field":"status"}],
@@ -30,7 +30,7 @@ func TestDecodeStrictSelectVNextAcceptsKeysetAndLegacyBranches(t *testing.T) {
 		t.Fatal("keyset request also exposed the legacy branch")
 	}
 
-	legacy := `{"profile":"reader","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"}],"limit":10}}`
+	legacy := `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"}],"limit":10}}`
 	decoded, err := DecodeStrictSelectVNext([]byte(legacy), 8, 50, 100)
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +56,7 @@ func TestDecodeStrictSelectVNextPreservesLargeDecimalTokensDuringBranchDetection
 		t.Fatalf("keyset branch did not preserve decimal token: %+v", keyset)
 	}
 
-	legacyBody := `{"profile":"reader","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"amount","operator":"eq","values":[{"type":"decimal","value":1e400}]},"limit":10}}`
+	legacyBody := `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"amount","operator":"eq","values":[{"type":"decimal","value":1e400}]},"limit":10}}`
 	legacyRequest, err := DecodeStrictSelectVNext([]byte(legacyBody), 8, 50, 100)
 	if err != nil {
 		t.Fatalf("legacy branch rejected exact large decimal: %v", err)
@@ -88,7 +88,14 @@ func TestDecodeStrictKeysetRejectsClosedContractViolations(t *testing.T) {
 		1,
 	)
 	fixtures := map[string]string{
-		"missing shape": strings.Replace(validKeysetRequestJSON, `"shape":"orders_by_id",`, "", 1),
+		"missing shape":      strings.Replace(validKeysetRequestJSON, `"shape":"orders_by_id",`, "", 1),
+		"missing datasource": strings.Replace(validKeysetRequestJSON, `"datasource":"mysql",`, "", 1),
+		"empty datasource":   strings.Replace(validKeysetRequestJSON, `"datasource":"mysql"`, `"datasource":""`, 1),
+		"null datasource":    strings.Replace(validKeysetRequestJSON, `"datasource":"mysql"`, `"datasource":null`, 1),
+		"numeric datasource": strings.Replace(validKeysetRequestJSON, `"datasource":"mysql"`, `"datasource":1`, 1),
+		"case folded datasource": strings.Replace(
+			validKeysetRequestJSON, `"datasource"`, `"Datasource"`, 1,
+		),
 		"null optional filter": strings.Replace(
 			validKeysetRequestJSON,
 			`"filter":{"kind":"predicate","field":"status","operator":"eq","values":[{"type":"string","value":"active"}]}`,
@@ -98,6 +105,7 @@ func TestDecodeStrictKeysetRejectsClosedContractViolations(t *testing.T) {
 		"fractional limit":            strings.Replace(validKeysetRequestJSON, `"limit":10`, `"limit":10.5`, 1),
 		"case folded member":          strings.Replace(validKeysetRequestJSON, `"projection"`, `"Projection"`, 1),
 		"duplicate root member":       strings.Replace(validKeysetRequestJSON, `"kind":"keyset"`, `"kind":"keyset","kind":"keyset"`, 1),
+		"duplicate datasource":        strings.Replace(validKeysetRequestJSON, `"datasource":"mysql"`, `"datasource":"mysql","datasource":"other"`, 1),
 		"unknown nested member":       strings.Replace(validKeysetRequestJSON, `"direction":"asc"`, `"direction":"asc","extra":true`, 1),
 		"numeric cursor":              strings.Replace(after, `"value":"1"`, `"value":1`, 1),
 		"cursor arity mismatch":       strings.Replace(after, `[{"type":"integer","value":"1"}]`, `[{"type":"integer","value":"1"},{"type":"integer","value":"2"}]`, 1),
@@ -181,7 +189,7 @@ func TestDecodeStrictKeysetTemporalCursorBranches(t *testing.T) {
 }
 
 func TestDecodeStrictSelectVNextBoundsBeforeBranchSelection(t *testing.T) {
-	deep := `{"profile":"reader","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":`
+	deep := `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"application","name":"orders"},"projection":[{"kind":"field","field":"id"}],"filter":`
 	for range 10 {
 		deep += `{"kind":"group","operator":"and","expressions":[`
 	}

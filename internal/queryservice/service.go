@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,17 +44,20 @@ func (e *Error) Error() string { return string(e.Kind) }
 func (e *Error) Unwrap() error { return e.Err }
 
 type ProfileCapability struct {
+	Name        string                 `json:"name"`
+	Limits      domain.Limits          `json:"limits"`
+	Datasources []DatasourceCapability `json:"datasources"`
+}
+
+type DatasourceCapability struct {
 	Name       string             `json:"name"`
-	Datasource string             `json:"datasource"`
 	Adapter    string             `json:"adapter"`
 	Operations []domain.Operation `json:"operations"`
-	Limits     domain.Limits      `json:"limits"`
 }
 
 type configuredQueryShapeSupport struct {
-	datasource string
-	count      int
-	supported  bool
+	count     int
+	supported bool
 }
 
 type Capabilities struct {
@@ -76,44 +80,41 @@ type ExplainResult struct {
 }
 
 type Service struct {
-	policy                    *policy.Snapshot
-	databases                 *database.Manager
-	audit                     audit.Sink
-	serviceVersion            string
-	globalCapacity            chan struct{}
-	profileCapacity           map[string]chan struct{}
-	discoveryMu               sync.RWMutex
-	queryShapes               map[string]*policy.QueryShapeDiscovery
-	discoveryNeeded           map[string]bool
-	queryShapeSupport         map[string]configuredQueryShapeSupport
-	queryShapeAuditIdentities []queryShapeAuditIdentity
-	discoveryAuditIdentities  map[string][]queryShapeAuditIdentity
-	keysetAuditIdentities     map[string][]queryShapeAuditIdentity
-	discoveryInit             bool
+	policy                  *policy.Snapshot
+	databases               *database.Manager
+	audit                   audit.Sink
+	serviceVersion          string
+	globalCapacity          chan struct{}
+	bindingCapacity         map[policy.BindingKey]chan struct{}
+	discoveryMu             sync.RWMutex
+	queryShapes             map[policy.BindingKey]*policy.QueryShapeDiscovery
+	discoveryNeeded         map[policy.BindingKey]bool
+	queryShapeSupport       map[policy.BindingKey]configuredQueryShapeSupport
+	queryShapeAuditIdentity queryShapeAuditIdentity
+	bindingAuditIdentities  map[policy.BindingKey]queryShapeAuditIdentity
+	discoveryInit           bool
 }
 
 func New(snapshot *policy.Snapshot, databases *database.Manager, sink audit.Sink, cfg config.Config, serviceVersion string) *Service {
-	profileCapacity := make(map[string]chan struct{}, len(cfg.Profiles))
-	discoveryNeeded := make(map[string]bool)
-	queryShapeSupport := make(map[string]configuredQueryShapeSupport)
-	queryShapeAuditIdentities := make([]queryShapeAuditIdentity, 0, len(cfg.Authentication.Basic.Users))
-	discoveryAuditIdentities := make(map[string][]queryShapeAuditIdentity)
-	keysetAuditIdentities := make(map[string][]queryShapeAuditIdentity)
-	clientIdentifiersByPrincipal := make(map[string][]string)
+	bindingCapacity := make(map[policy.BindingKey]chan struct{})
+	discoveryNeeded := make(map[policy.BindingKey]bool)
+	queryShapeSupport := make(map[policy.BindingKey]configuredQueryShapeSupport)
+	bindingAuditIdentities := make(map[policy.BindingKey]queryShapeAuditIdentity)
+	auditIdentityByPrincipal := make(map[string]queryShapeAuditIdentity)
+	var worstAuditIdentity queryShapeAuditIdentity
 	for username, user := range cfg.Authentication.Basic.Users {
-		queryShapeAuditIdentities = append(queryShapeAuditIdentities, queryShapeAuditIdentity{
+		identity := queryShapeAuditIdentity{
 			principal: user.Principal, clientIdentifier: username,
-		})
-		clientIdentifiersByPrincipal[user.Principal] = append(
-			clientIdentifiersByPrincipal[user.Principal], username,
-		)
+		}
+		if moreConservativeAuditIdentity(identity, worstAuditIdentity) {
+			worstAuditIdentity = identity
+		}
+		if moreConservativeAuditIdentity(identity, auditIdentityByPrincipal[user.Principal]) {
+			auditIdentityByPrincipal[user.Principal] = identity
+		}
 	}
 	for name, profile := range cfg.Profiles {
 		limits := cfg.HardLimits.Min(profile.Limits)
-		profileCapacity[name] = make(chan struct{}, limits.MaxConcurrency)
-		if slices.Contains(profile.Operations, domain.OperationListQueryShapes) {
-			discoveryNeeded[name] = cfg.Datasources[profile.Datasource].RequiredForReadiness
-		}
 		hasTimeBucket := false
 		hasNumericBucket := false
 		for _, shape := range profile.Query.AggregateShapes {
@@ -128,56 +129,60 @@ func New(snapshot *policy.Snapshot, databases *database.Manager, sink audit.Sink
 		}
 		aggregateCount := len(profile.Query.AggregateShapes)
 		keysetCount := len(profile.Query.KeysetSelectShapes)
-		if aggregateCount+keysetCount != 0 {
-			capabilities := databases.Capabilities(profile.Datasource)
-			features := databases.Features(profile.Datasource)
+		for _, datasource := range profile.Datasources {
+			key := policy.BindingKey{Profile: name, Datasource: datasource}
+			bindingCapacity[key] = make(chan struct{}, limits.MaxConcurrency)
+			if slices.Contains(profile.Operations, domain.OperationListQueryShapes) {
+				discoveryNeeded[key] = cfg.Datasources[datasource].RequiredForReadiness
+			}
+			if aggregateCount+keysetCount == 0 {
+				continue
+			}
+			capabilities := databases.Capabilities(datasource)
+			features := databases.Features(datasource)
 			supported := (aggregateCount == 0 ||
 				slices.Contains(capabilities, domain.OperationAggregate) &&
 					(!hasTimeBucket || slices.Contains(features, domain.FeatureTimeBucketUTC)) &&
 					(!hasNumericBucket || slices.Contains(features, domain.FeatureNumericBucketExact))) &&
 				(keysetCount == 0 || slices.Contains(capabilities, domain.OperationSelectKeyset))
-			queryShapeSupport[name] = configuredQueryShapeSupport{
-				datasource: profile.Datasource,
-				count:      aggregateCount + keysetCount,
-				supported:  supported,
+			queryShapeSupport[key] = configuredQueryShapeSupport{
+				count:     aggregateCount + keysetCount,
+				supported: supported,
 			}
 		}
 	}
 	for principalName, principal := range cfg.Principals {
-		clientIdentifiers := clientIdentifiersByPrincipal[principalName]
-		if len(clientIdentifiers) == 0 {
+		identity, hasCredential := auditIdentityByPrincipal[principalName]
+		if !hasCredential {
 			continue
 		}
-		slices.Sort(clientIdentifiers)
+		principalDatasources := stringMembershipSet(principal.Datasources)
 		for _, profileName := range principal.Profiles {
 			profile, configured := cfg.Profiles[profileName]
 			if !configured {
 				continue
 			}
-			for _, clientIdentifier := range clientIdentifiers {
-				identity := queryShapeAuditIdentity{principal: principalName, clientIdentifier: clientIdentifier}
-				if _, publishesShapes := discoveryNeeded[profileName]; publishesShapes {
-					discoveryAuditIdentities[profileName] = append(
-						discoveryAuditIdentities[profileName], identity,
-					)
+			for _, datasource := range profile.Datasources {
+				if _, assigned := principalDatasources[datasource]; !assigned {
+					continue
 				}
-				if slices.Contains(profile.Operations, domain.OperationSelectKeyset) {
-					keysetAuditIdentities[profileName] = append(keysetAuditIdentities[profileName], identity)
+				key := policy.BindingKey{Profile: profileName, Datasource: datasource}
+				if moreConservativeAuditIdentity(identity, bindingAuditIdentities[key]) {
+					bindingAuditIdentities[key] = identity
 				}
 			}
 		}
 	}
 	return &Service{
 		policy: snapshot, databases: databases, audit: sink,
-		serviceVersion:            serviceVersion,
-		globalCapacity:            make(chan struct{}, cfg.HardLimits.MaxConcurrency),
-		profileCapacity:           profileCapacity,
-		queryShapes:               make(map[string]*policy.QueryShapeDiscovery),
-		discoveryNeeded:           discoveryNeeded,
-		queryShapeSupport:         queryShapeSupport,
-		queryShapeAuditIdentities: queryShapeAuditIdentities,
-		discoveryAuditIdentities:  discoveryAuditIdentities,
-		keysetAuditIdentities:     keysetAuditIdentities,
+		serviceVersion:          serviceVersion,
+		globalCapacity:          make(chan struct{}, cfg.HardLimits.MaxConcurrency),
+		bindingCapacity:         bindingCapacity,
+		queryShapes:             make(map[policy.BindingKey]*policy.QueryShapeDiscovery),
+		discoveryNeeded:         discoveryNeeded,
+		queryShapeSupport:       queryShapeSupport,
+		queryShapeAuditIdentity: worstAuditIdentity,
+		bindingAuditIdentities:  bindingAuditIdentities,
 	}
 }
 
@@ -193,37 +198,47 @@ func (s *Service) Capabilities(principal string) Capabilities {
 		APIVersion: domain.APIMajorVersion, ServiceVersion: s.serviceVersion,
 		PolicyVersion: s.policy.Version(), Profiles: make([]ProfileCapability, 0),
 	}
+	principalDatasources := stringMembershipSet(s.policy.PrincipalDatasources(principal))
 	for _, name := range s.policy.PrincipalProfiles(principal) {
-		datasource, configuredOperations, profileLimits, ok := s.policy.ProfileBinding(name)
+		datasources, configuredOperations, profileLimits, ok := s.policy.ProfileBinding(name)
 		if !ok {
 			continue
 		}
-		adapterCapabilities := s.databases.Capabilities(datasource)
-		operations := make([]domain.Operation, 0, len(configuredOperations))
-		for _, operation := range configuredOperations {
-			if operation == domain.OperationListQueryShapes {
-				if s.supportsConfiguredQueryShapes(name, datasource) && s.hasQueryShapeDiscovery(name) {
-					operations = append(operations, operation)
-				}
+		profileCapability := ProfileCapability{
+			Name: name, Limits: s.policy.HardLimits().Min(profileLimits),
+			Datasources: make([]DatasourceCapability, 0),
+		}
+		for _, datasource := range datasources {
+			if _, assigned := principalDatasources[datasource]; !assigned {
 				continue
 			}
-			if slices.Contains(adapterCapabilities, operation) {
-				operations = append(operations, operation)
+			key := policy.BindingKey{Profile: name, Datasource: datasource}
+			adapterCapabilities := s.databases.Capabilities(datasource)
+			operations := make([]domain.Operation, 0, len(configuredOperations))
+			for _, operation := range configuredOperations {
+				if operation == domain.OperationListQueryShapes {
+					if s.supportsConfiguredQueryShapes(key) && s.hasQueryShapeDiscovery(key) {
+						operations = append(operations, operation)
+					}
+					continue
+				}
+				if slices.Contains(adapterCapabilities, operation) {
+					operations = append(operations, operation)
+				}
 			}
+			profileCapability.Datasources = append(profileCapability.Datasources, DatasourceCapability{
+				Name: datasource, Adapter: s.databases.AdapterName(datasource), Operations: operations,
+			})
 		}
-		result.Profiles = append(result.Profiles, ProfileCapability{
-			Name: name, Datasource: datasource, Adapter: s.databases.AdapterName(datasource),
-			Operations: operations, Limits: s.policy.HardLimits().Min(profileLimits),
+		slices.SortFunc(profileCapability.Datasources, func(a, b DatasourceCapability) int {
+			return strings.Compare(a.Name, b.Name)
 		})
+		if len(profileCapability.Datasources) != 0 {
+			result.Profiles = append(result.Profiles, profileCapability)
+		}
 	}
 	slices.SortFunc(result.Profiles, func(a, b ProfileCapability) int {
-		if a.Name < b.Name {
-			return -1
-		}
-		if a.Name > b.Name {
-			return 1
-		}
-		return 0
+		return strings.Compare(a.Name, b.Name)
 	})
 	return result
 }
@@ -234,14 +249,14 @@ func (s *Service) Explain(
 	bodyBytes int,
 	request queryspec.Request,
 ) (ExplainResult, error) {
-	profile, assigned := s.assignedProfile(principal, request.Profile)
-	if !assigned || !slices.Contains(profile.Operations, domain.OperationExplainSelect) {
-		if err := s.writeDenial(ctx, requestID, queryID, principal, clientIdentifier, request.Profile, domain.OperationExplainSelect, policy.ReasonDeniedOperation, ""); err != nil {
+	binding, assigned := s.assignedBinding(principal, request.Profile, request.Datasource, domain.OperationExplainSelect)
+	if !assigned {
+		if err := s.writeDenial(ctx, requestID, queryID, principal, clientIdentifier, request.Profile, request.Datasource, domain.OperationExplainSelect, policy.ReasonDeniedOperation, ""); err != nil {
 			return ExplainResult{}, &Error{Kind: ErrorServiceUnavailable, Err: err}
 		}
 		return ExplainResult{}, &Error{Kind: ErrorDenied, ReasonCode: policy.ReasonDeniedOperation}
 	}
-	limits := s.policy.HardLimits().Min(profile.Limits)
+	limits := binding.Limits()
 	if bodyBytes > limits.MaxRequestBytes {
 		return ExplainResult{}, &Error{Kind: ErrorTooLarge}
 	}
@@ -253,16 +268,16 @@ func (s *Service) Explain(
 		return ExplainResult{}, &Error{Kind: ErrorInvalid, Err: err}
 	}
 	queryShapeHash := queryspec.ShapeHash(validated.Spec())
-	if err := s.precheckSourceText(ctx, requestID, queryID, principal, clientIdentifier, request.Profile, profile, domain.OperationExplainSelect, queryShapeHash, queryspec.UsesSourceText(validated.Spec())); err != nil {
+	if err := s.precheckSourceText(ctx, requestID, queryID, principal, clientIdentifier, binding, domain.OperationExplainSelect, queryShapeHash, queryspec.UsesSourceText(validated.Spec())); err != nil {
 		return ExplainResult{}, err
 	}
-	adapterName := s.databases.AdapterName(profile.Datasource)
-	if !slices.Contains(s.databases.Capabilities(profile.Datasource), domain.OperationExplainSelect) {
+	adapterName := s.databases.AdapterName(binding.Datasource())
+	if !slices.Contains(s.databases.Capabilities(binding.Datasource()), domain.OperationExplainSelect) {
 		if err := s.writeAudit(context.WithoutCancel(ctx), audit.Event{
 			Type: "query_completion", RequestID: requestID, QueryID: queryID, Principal: principal,
 			ClientIdentifier: clientIdentifier,
 			PolicyProfile:    request.Profile, PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(),
-			Datasource: profile.Datasource, Adapter: adapterName, Operation: string(domain.OperationExplainSelect),
+			Datasource: binding.Datasource(), Adapter: adapterName, Operation: string(domain.OperationExplainSelect),
 			Outcome: "not_implemented", QueryShapeHash: queryShapeHash,
 		}); err != nil {
 			return ExplainResult{}, &Error{Kind: ErrorServiceUnavailable, Err: err}
@@ -272,14 +287,14 @@ func (s *Service) Explain(
 	executionContext, cancel := context.WithTimeout(ctx, limits.Deadline())
 	defer cancel()
 	semanticsStarted := time.Now()
-	semantics, err := s.databases.IdentifierSemantics(executionContext, profile.Datasource)
+	semantics, err := s.databases.IdentifierSemantics(executionContext, binding.Datasource())
 	if err != nil {
 		errorKind := classifyDatabaseAuditError(err)
 		if auditErr := s.writeAudit(context.WithoutCancel(ctx), audit.Event{
 			Type: "query_completion", RequestID: requestID, QueryID: queryID, Principal: principal,
 			ClientIdentifier: clientIdentifier,
 			PolicyProfile:    request.Profile, PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(),
-			Datasource: profile.Datasource, Adapter: adapterName, Operation: string(domain.OperationExplainSelect),
+			Datasource: binding.Datasource(), Adapter: adapterName, Operation: string(domain.OperationExplainSelect),
 			Outcome: "error", ErrorKind: string(errorKind),
 			DurationMS: durationMilliseconds(semanticsStarted), QueryShapeHash: queryShapeHash,
 		}); auditErr != nil {
@@ -287,17 +302,16 @@ func (s *Service) Explain(
 		}
 		return ExplainResult{}, mapDatabaseError(err)
 	}
-	s.observeIdentifierSemantics(request.Profile, semantics)
+	s.observeIdentifierSemantics(binding.Key(), semantics)
 	authorized, err := s.policy.AuthorizeExplain(
-		principal,
-		request.Profile,
+		binding,
 		validated,
 		semantics,
 	)
 	if err != nil {
 		reason := policy.ReasonDeniedOperation
 		policy.IsDenial(err, &reason)
-		if auditErr := s.writeDenial(ctx, requestID, queryID, principal, clientIdentifier, request.Profile, domain.OperationExplainSelect, reason, queryShapeHash); auditErr != nil {
+		if auditErr := s.writeDenial(ctx, requestID, queryID, principal, clientIdentifier, binding.Profile(), binding.Datasource(), domain.OperationExplainSelect, reason, queryShapeHash); auditErr != nil {
 			return ExplainResult{}, &Error{Kind: ErrorServiceUnavailable, Err: auditErr}
 		}
 		return ExplainResult{}, &Error{Kind: ErrorDenied, ReasonCode: reason, Err: err}
@@ -310,13 +324,13 @@ func (s *Service) Explain(
 		Type: "query_decision", RequestID: requestID, QueryID: queryID, Principal: principal,
 		ClientIdentifier: clientIdentifier,
 		PolicyProfile:    request.Profile, PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(),
-		Datasource: profile.Datasource, Adapter: adapterName, Operation: string(domain.OperationExplainSelect),
+		Datasource: binding.Datasource(), Adapter: adapterName, Operation: string(domain.OperationExplainSelect),
 		Decision: "allow", QueryShapeHash: queryShapeHash, Resources: resources, Fields: fields,
 	}
 	if err := s.writeAudit(ctx, decision); err != nil {
 		return ExplainResult{}, &Error{Kind: ErrorServiceUnavailable, Err: err}
 	}
-	releaseCapacity, ok := s.acquireCapacity(request.Profile)
+	releaseCapacity, ok := s.acquireCapacity(binding.Key())
 	if !ok {
 		return ExplainResult{}, &Error{Kind: ErrorCapacity}
 	}
@@ -333,7 +347,7 @@ func (s *Service) Explain(
 		Type: "query_completion", RequestID: requestID, QueryID: queryID, Principal: principal,
 		ClientIdentifier: clientIdentifier,
 		PolicyProfile:    request.Profile, PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(),
-		Datasource: profile.Datasource, Adapter: adapterName, Operation: string(domain.OperationExplainSelect),
+		Datasource: binding.Datasource(), Adapter: adapterName, Operation: string(domain.OperationExplainSelect),
 		Outcome: outcome, ErrorKind: errorKind,
 		DurationMS: durationMilliseconds(started), QueryShapeHash: queryShapeHash,
 		ResultBytes: len(databaseResult.Plan), Resources: resources, Fields: fields,
@@ -346,7 +360,7 @@ func (s *Service) Explain(
 	}
 	return ExplainResult{
 		QueryID: queryID, PolicyProfile: request.Profile, PolicyVersion: s.policy.Version(),
-		Datasource: profile.Datasource, Adapter: adapterName, Format: databaseResult.Format,
+		Datasource: binding.Datasource(), Adapter: adapterName, Format: databaseResult.Format,
 		Plan: databaseResult.Plan, Limits: limits, Warnings: []string{},
 	}, nil
 }
@@ -358,71 +372,57 @@ func (s *Service) Ready(ctx context.Context) error {
 	if err := s.databases.Ready(ctx); err != nil {
 		return err
 	}
-	requiredByDatasource := make(map[string]string)
-	for profileName, required := range s.discoveryNeeded {
+	requiredByDatasource := make(map[string]policy.BindingKey)
+	for key, required := range s.discoveryNeeded {
 		if !required {
 			continue
 		}
-		datasource := s.profileDatasource(profileName)
-		if !s.supportsConfiguredQueryShapes(profileName, datasource) {
+		if !s.supportsConfiguredQueryShapes(key) {
 			continue
 		}
-		requiredByDatasource[datasource] = profileName
+		requiredByDatasource[key.Datasource] = key
 	}
-	for datasource, profileName := range requiredByDatasource {
+	for datasource, key := range requiredByDatasource {
 		probeContext, cancel := context.WithTimeout(ctx, 2*time.Second)
 		semantics, err := s.databases.IdentifierSemantics(probeContext, datasource)
 		cancel()
 		if err != nil {
 			return err
 		}
-		s.observeIdentifierSemantics(profileName, semantics)
+		s.observeIdentifierSemantics(key, semantics)
 	}
 	s.discoveryMu.RLock()
 	defer s.discoveryMu.RUnlock()
-	for profile, required := range s.discoveryNeeded {
-		datasource := s.profileDatasource(profile)
-		if !required || !s.supportsConfiguredQueryShapes(profile, datasource) {
+	for key, required := range s.discoveryNeeded {
+		if !required || !s.supportsConfiguredQueryShapes(key) {
 			continue
 		}
-		if s.queryShapes[profile] == nil {
+		if s.queryShapes[key] == nil {
 			return errors.New("required query-shape discovery snapshot is unavailable")
 		}
 	}
 	return nil
 }
 
-func (s *Service) supportsConfiguredQueryShapes(profileName, datasource string) bool {
-	configured, ok := s.queryShapeSupport[profileName]
-	return ok && configured.count != 0 && configured.datasource == datasource && configured.supported
+func (s *Service) supportsConfiguredQueryShapes(key policy.BindingKey) bool {
+	configured, ok := s.queryShapeSupport[key]
+	return ok && configured.count != 0 && configured.supported
 }
 
-func (s *Service) profileDatasource(profileName string) string {
-	datasource, _, _, ok := s.policy.ProfileBinding(profileName)
-	if !ok {
-		return ""
-	}
-	return datasource
+func (s *Service) assignedBinding(
+	principal, profileName, datasource string, operation domain.Operation,
+) (policy.AuthorizedBinding, bool) {
+	binding, err := s.policy.AuthorizeBinding(principal, profileName, datasource, operation)
+	return binding, err == nil
 }
 
-func (s *Service) assignedProfile(principal, name string) (config.Profile, bool) {
-	if !slices.Contains(s.policy.PrincipalProfiles(principal), name) {
-		return config.Profile{}, false
-	}
-	datasource, operations, limits, ok := s.policy.ProfileBinding(name)
-	if !ok {
-		return config.Profile{}, false
-	}
-	return config.Profile{Datasource: datasource, Operations: operations, Limits: limits}, true
-}
-
-func (s *Service) acquireCapacity(profile string) (func(), bool) {
+func (s *Service) acquireCapacity(key policy.BindingKey) (func(), bool) {
 	select {
 	case s.globalCapacity <- struct{}{}:
 	default:
 		return nil, false
 	}
-	profileGate, ok := s.profileCapacity[profile]
+	profileGate, ok := s.bindingCapacity[key]
 	if !ok {
 		<-s.globalCapacity
 		return nil, false
@@ -441,23 +441,40 @@ func (s *Service) acquireCapacity(profile string) (func(), bool) {
 
 func (s *Service) writeDenial(
 	ctx context.Context,
-	requestID, queryID, principal, clientIdentifier, profile string,
+	requestID, queryID, principal, clientIdentifier, profile, datasource string,
 	operation domain.Operation,
 	reason, queryShapeHash string,
 ) error {
-	datasource, _, _, _ := s.policy.ProfileBinding(profile)
 	eventType := "operation_decision"
 	if queryID != "" {
 		eventType = "query_decision"
 	}
-	return s.writeAudit(context.WithoutCancel(ctx), audit.Event{
+	event := audit.Event{
 		Type: eventType, RequestID: requestID, QueryID: queryID, Principal: principal,
 		ClientIdentifier: clientIdentifier,
-		PolicyProfile:    profile, PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(),
-		Datasource: datasource, Adapter: s.databases.AdapterName(datasource),
+		PolicyVersion:    s.policy.Version(), PolicyHash: s.policy.Hash(),
 		Operation: string(operation), Decision: "deny", ReasonCode: reason,
 		QueryShapeHash: queryShapeHash,
-	})
+	}
+	if binding, err := s.policy.AuthorizeBinding(principal, profile, datasource, operation); err == nil {
+		event.PolicyProfile = binding.Profile()
+		event.Datasource = binding.Datasource()
+		event.Adapter = s.databases.AdapterName(binding.Datasource())
+	} else {
+		event.RequestedProfileHash = auditIdentifierHash(requestedProfileHashDomain, profile)
+		event.RequestedProfileBytes = len(profile)
+		event.RequestedDatasourceHash = auditIdentifierHash(requestedDatasourceHashDomain, datasource)
+		event.RequestedDatasourceBytes = len(datasource)
+	}
+	return s.writeAudit(context.WithoutCancel(ctx), event)
+}
+
+func stringMembershipSet(values []string) map[string]struct{} {
+	result := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		result[value] = struct{}{}
+	}
+	return result
 }
 
 func durationMilliseconds(started time.Time) *int64 {

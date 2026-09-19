@@ -12,9 +12,9 @@ import (
 func TestSourceTextContractFixturesMatchOpenAPIAndStrictRuntime(t *testing.T) {
 	contract := loadOpenAPI31Validator(t)
 	defer contract.Release()
-	selectBody := `{"profile":"reader","query":{"source":{"schema":"app","name":"events"},"projection":[{"kind":"field","field":"event_date","representation":"source_text"}],"filter":{"kind":"predicate","field":"event_date","representation":"source_text","operator":"eq","values":[{"type":"string","value":"2026-02-31"}]},"order_by":[{"field":"event_date","direction":"asc","representation":"source_text"}],"limit":2}}`
-	aggregateBody := `{"profile":"reader","query":{"mode":"grouped","source":{"schema":"app","name":"events"},"projection":[{"kind":"dimension","field":"event_date","representation":"source_text"},{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"predicate","field":"event_date","representation":"source_text","operator":"eq","values":[{"type":"string","value":"0000-00-00"}]},"order_by":[{"kind":"dimension","field":"event_date","direction":"asc","representation":"source_text"}],"limit":2}}`
-	keysetBody := `{"kind":"keyset","profile":"reader","shape":"events_page","query":{"source":{"schema":"app","name":"events"},"projection":[{"kind":"field","field":"event_date","representation":"source_text"}],"filter":{"kind":"predicate","field":"event_date","representation":"source_text","operator":"eq","values":[{"type":"string","value":"0000-00-00"}]},"order_by":[{"field":"event_date","direction":"asc","representation":"source_text"}],"limit":2},"page":{"kind":"after","cursor":[{"type":"string","value":"2026-02-31"}]}}`
+	selectBody := `{"profile":"reader","datasource":"mysql","query":{"source":{"schema":"app","name":"events"},"projection":[{"kind":"field","field":"event_date","representation":"source_text"}],"filter":{"kind":"predicate","field":"event_date","representation":"source_text","operator":"eq","values":[{"type":"string","value":"2026-02-31"}]},"order_by":[{"field":"event_date","direction":"asc","representation":"source_text"}],"limit":2}}`
+	aggregateBody := `{"profile":"reader","datasource":"mysql","query":{"mode":"grouped","source":{"schema":"app","name":"events"},"projection":[{"kind":"dimension","field":"event_date","representation":"source_text"},{"kind":"measure","function":"count_all","alias":"total"}],"filter":{"kind":"predicate","field":"event_date","representation":"source_text","operator":"eq","values":[{"type":"string","value":"0000-00-00"}]},"order_by":[{"kind":"dimension","field":"event_date","direction":"asc","representation":"source_text"}],"limit":2}}`
+	keysetBody := `{"kind":"keyset","profile":"reader","datasource":"mysql","shape":"events_page","query":{"source":{"schema":"app","name":"events"},"projection":[{"kind":"field","field":"event_date","representation":"source_text"}],"filter":{"kind":"predicate","field":"event_date","representation":"source_text","operator":"eq","values":[{"type":"string","value":"0000-00-00"}]},"order_by":[{"field":"event_date","direction":"asc","representation":"source_text"}],"limit":2},"page":{"kind":"after","cursor":[{"type":"string","value":"2026-02-31"}]}}`
 	for _, endpoint := range []struct {
 		path, body string
 		decode     func([]byte) error
@@ -57,7 +57,7 @@ func TestDiscoveryRejectsRetiredMediaTypesBeforeDatasourceCalls(t *testing.T) {
 	server, closeDatabases := successfulContractServer(t)
 	defer closeDatabases()
 	for _, media := range []string{"application/vnd.quordon.query-shapes.v2+json", "application/vnd.quordon.query-shapes.v3+json", "application/json; charset=utf-8", "application/json,text/plain"} {
-		request := httptest.NewRequest(http.MethodGet, "http://quordon.test/query-shapes?profile=reader", nil)
+		request := httptest.NewRequest(http.MethodGet, "http://quordon.test/query-shapes?profile=reader&datasource=mysql", nil)
 		request.SetBasicAuth("client", "secret")
 		request.Header.Set("Accept", media)
 		if valid, _ := contract.ValidateHttpRequestSync(request); valid {
@@ -76,7 +76,7 @@ func TestSourceTextAggregateOrderMismatchIsSchemaValidSemantic422(t *testing.T) 
 	defer contract.Release()
 	server, closeDatabases := successfulContractServer(t)
 	defer closeDatabases()
-	body := `{"profile":"reader","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"dimension","field":"id","representation":"source_text"},{"kind":"measure","function":"count_all","alias":"total"}],"order_by":[{"kind":"dimension","field":"id","direction":"asc"}],"limit":2}}`
+	body := `{"profile":"reader","datasource":"mysql","query":{"mode":"grouped","source":{"schema":"app","name":"orders"},"projection":[{"kind":"dimension","field":"id","representation":"source_text"},{"kind":"measure","function":"count_all","alias":"total"}],"order_by":[{"kind":"dimension","field":"id","direction":"asc"}],"limit":2}}`
 	request := httptest.NewRequest(http.MethodPost, "http://quordon.test/queries/aggregate", strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	request.SetBasicAuth("client", "secret")

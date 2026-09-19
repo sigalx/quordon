@@ -2,12 +2,9 @@ package queryservice
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -66,16 +63,16 @@ func (s *Service) SelectKeyset(
 	if err != nil {
 		return KeysetSelectResult{}, &Error{Kind: ErrorInvalid, Err: err}
 	}
-	profile, assigned := s.assignedProfile(principal, request.Profile)
-	if !assigned || !slices.Contains(profile.Operations, domain.OperationSelectKeyset) {
+	binding, assigned := s.assignedBinding(principal, request.Profile, request.Datasource, domain.OperationSelectKeyset)
+	if !assigned {
 		if auditErr := s.writeKeysetOperationDenial(
-			ctx, requestID, queryID, principal, clientIdentifier, request.Profile,
+			ctx, requestID, queryID, principal, clientIdentifier, request.Profile, request.Datasource,
 		); auditErr != nil {
 			return KeysetSelectResult{}, &Error{Kind: ErrorServiceUnavailable, Err: auditErr}
 		}
 		return KeysetSelectResult{}, &Error{Kind: ErrorDenied, ReasonCode: policy.ReasonDeniedOperation}
 	}
-	limits := hard.Min(profile.Limits)
+	limits := binding.Limits()
 	if bodyBytes > limits.MaxRequestBytes {
 		return KeysetSelectResult{}, &Error{Kind: ErrorTooLarge}
 	}
@@ -87,29 +84,29 @@ func (s *Service) SelectKeyset(
 		return KeysetSelectResult{}, &Error{Kind: ErrorInvalid, Err: err}
 	}
 	queryShapeHash := preAuthorizationKeysetShapeHash(validated)
-	if err := s.precheckSourceText(ctx, requestID, queryID, principal, clientIdentifier, request.Profile, profile, domain.OperationSelectKeyset, queryShapeHash, queryspec.KeysetUsesSourceText(validated.Request())); err != nil {
+	if err := s.precheckSourceText(ctx, requestID, queryID, principal, clientIdentifier, binding, domain.OperationSelectKeyset, queryShapeHash, queryspec.KeysetUsesSourceText(validated.Request())); err != nil {
 		return KeysetSelectResult{}, err
 	}
-	if err := s.policy.PrecheckKeysetSelect(principal, request.Profile, validated); err != nil {
+	if err := s.policy.PrecheckKeysetSelect(binding, validated); err != nil {
 		reason := policy.ReasonDeniedQueryFeature
 		if !policy.IsDenial(err, &reason) {
 			return KeysetSelectResult{}, &Error{Kind: ErrorInvalid, Err: err}
 		}
 		if auditErr := s.writeDenial(
-			ctx, requestID, queryID, principal, clientIdentifier, request.Profile,
+			ctx, requestID, queryID, principal, clientIdentifier, binding.Profile(), binding.Datasource(),
 			domain.OperationSelectKeyset, reason, queryShapeHash,
 		); auditErr != nil {
 			return KeysetSelectResult{}, &Error{Kind: ErrorServiceUnavailable, Err: auditErr}
 		}
 		return KeysetSelectResult{}, &Error{Kind: ErrorDenied, ReasonCode: reason, Err: err}
 	}
-	adapterName := s.databases.AdapterName(profile.Datasource)
+	adapterName := s.databases.AdapterName(binding.Datasource())
 	started := time.Now()
-	if !slices.Contains(s.databases.Capabilities(profile.Datasource), domain.OperationSelectKeyset) {
+	if !slices.Contains(s.databases.Capabilities(binding.Datasource()), domain.OperationSelectKeyset) {
 		if auditErr := s.writeAudit(context.WithoutCancel(ctx), audit.Event{
 			Type: "query_completion", RequestID: requestID, QueryID: queryID,
 			Principal: principal, ClientIdentifier: clientIdentifier, PolicyProfile: request.Profile,
-			PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(), Datasource: profile.Datasource,
+			PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(), Datasource: binding.Datasource(),
 			Adapter: adapterName, Operation: string(domain.OperationSelectKeyset), Outcome: "not_implemented",
 			DurationMS: durationMilliseconds(started), QueryShapeHash: queryShapeHash,
 			Metadata: map[string]any{"keyset_shape": request.Shape},
@@ -120,13 +117,13 @@ func (s *Service) SelectKeyset(
 	}
 	budget, err := keysetEnvelopeBudget(
 		queryID, request.Profile, s.policy.Version(), request.Shape,
-		profile.Datasource, adapterName, limits,
+		binding.Datasource(), adapterName, limits,
 	)
 	if err != nil {
 		if auditErr := s.writeAudit(context.WithoutCancel(ctx), audit.Event{
 			Type: "query_completion", RequestID: requestID, QueryID: queryID,
 			Principal: principal, ClientIdentifier: clientIdentifier, PolicyProfile: request.Profile,
-			PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(), Datasource: profile.Datasource,
+			PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(), Datasource: binding.Datasource(),
 			Adapter: adapterName, Operation: string(domain.OperationSelectKeyset), Outcome: "error",
 			ErrorKind: string(ErrorInternal), DurationMS: durationMilliseconds(started),
 			QueryShapeHash: queryShapeHash, Metadata: map[string]any{"keyset_shape": request.Shape},
@@ -138,37 +135,37 @@ func (s *Service) SelectKeyset(
 	if budget.FinalBaseBytes > limits.MaxResultBytes || budget.MoreBaseBytes > limits.MaxResultBytes {
 		return KeysetSelectResult{}, s.completeQueryError(
 			ctx, requestID, queryID, principal, clientIdentifier, request.Profile,
-			profile.Datasource, adapterName, domain.OperationSelectKeyset, queryShapeHash,
+			binding.Datasource(), adapterName, domain.OperationSelectKeyset, queryShapeHash,
 			nil, nil, map[string]any{"keyset_shape": request.Shape}, started,
 			&database.Error{Kind: database.ErrorResultTooLarge},
 		)
 	}
 	executionContext, cancel := context.WithTimeout(ctx, limits.Deadline())
 	defer cancel()
-	semantics, err := s.databases.IdentifierSemantics(executionContext, profile.Datasource)
+	semantics, err := s.databases.IdentifierSemantics(executionContext, binding.Datasource())
 	if err != nil {
 		return KeysetSelectResult{}, s.completeQueryError(
 			ctx, requestID, queryID, principal, clientIdentifier, request.Profile,
-			profile.Datasource, adapterName, domain.OperationSelectKeyset, queryShapeHash,
+			binding.Datasource(), adapterName, domain.OperationSelectKeyset, queryShapeHash,
 			nil, nil, map[string]any{"keyset_shape": request.Shape}, started, err,
 		)
 	}
-	s.observeIdentifierSemantics(request.Profile, semantics)
+	s.observeIdentifierSemantics(binding.Key(), semantics)
 	authorized, err := s.policy.AuthorizeKeysetSelect(
-		principal, clientIdentifier, request.Profile, adapterName, validated, semantics,
+		binding, clientIdentifier, adapterName, validated, semantics,
 	)
 	if err != nil {
 		reason := ""
 		if !policy.IsDenial(err, &reason) {
 			return KeysetSelectResult{}, s.completeQueryError(
 				ctx, requestID, queryID, principal, clientIdentifier, request.Profile,
-				profile.Datasource, adapterName, domain.OperationSelectKeyset, queryShapeHash,
+				binding.Datasource(), adapterName, domain.OperationSelectKeyset, queryShapeHash,
 				nil, nil, map[string]any{"keyset_shape": request.Shape}, started,
 				&database.Error{Kind: database.ErrorInvalid, Err: err},
 			)
 		}
 		if auditErr := s.writeDenial(
-			ctx, requestID, queryID, principal, clientIdentifier, request.Profile,
+			ctx, requestID, queryID, principal, clientIdentifier, binding.Profile(), binding.Datasource(),
 			domain.OperationSelectKeyset, reason, queryShapeHash,
 		); auditErr != nil {
 			return KeysetSelectResult{}, &Error{Kind: ErrorServiceUnavailable, Err: auditErr}
@@ -187,7 +184,7 @@ func (s *Service) SelectKeyset(
 	); err != nil {
 		return KeysetSelectResult{}, err
 	}
-	releaseCapacity, ok := s.acquireCapacity(request.Profile)
+	releaseCapacity, ok := s.acquireCapacity(binding.Key())
 	if !ok {
 		if auditErr := s.writeAudit(context.WithoutCancel(ctx), audit.Event{
 			Type: "query_completion", RequestID: requestID, QueryID: queryID,
@@ -492,23 +489,22 @@ func keysetSuccessAuditMetadata(shapeName string, hasMore bool, rowCount int) ma
 }
 
 const requestedKeysetProfileHashDomain = "quordon/keyset-requested-profile/v1\x00"
+const requestedKeysetDatasourceHashDomain = "quordon/keyset-requested-datasource/v1\x00"
 
 func (s *Service) writeKeysetOperationDenial(
 	ctx context.Context,
-	requestID, queryID, principal, clientIdentifier, requestedProfile string,
+	requestID, queryID, principal, clientIdentifier, requestedProfile, requestedDatasource string,
 ) error {
-	digest := sha256.New()
-	_, _ = io.WriteString(digest, requestedKeysetProfileHashDomain)
-	_, _ = io.WriteString(digest, requestedProfile)
 	return s.writeAudit(context.WithoutCancel(ctx), s.keysetOperationDenialEvent(
 		requestID, queryID, principal, clientIdentifier,
-		hex.EncodeToString(digest.Sum(nil)), len(requestedProfile),
+		auditIdentifierHash(requestedKeysetProfileHashDomain, requestedProfile), len(requestedProfile),
+		auditIdentifierHash(requestedKeysetDatasourceHashDomain, requestedDatasource), len(requestedDatasource),
 	))
 }
 
 func (s *Service) keysetOperationDenialEvent(
 	requestID, queryID, principal, clientIdentifier, requestedProfileHash string,
-	requestedProfileBytes int,
+	requestedProfileBytes int, requestedDatasourceHash string, requestedDatasourceBytes int,
 ) audit.Event {
 	return audit.Event{
 		Type: "query_decision", RequestID: requestID, QueryID: queryID,
@@ -516,6 +512,7 @@ func (s *Service) keysetOperationDenialEvent(
 		PolicyVersion: s.policy.Version(), PolicyHash: s.policy.Hash(),
 		Operation: string(domain.OperationSelectKeyset), Decision: "deny",
 		ReasonCode: policy.ReasonDeniedOperation, RequestedProfileHash: requestedProfileHash,
-		RequestedProfileBytes: requestedProfileBytes,
+		RequestedProfileBytes: requestedProfileBytes, RequestedDatasourceHash: requestedDatasourceHash,
+		RequestedDatasourceBytes: requestedDatasourceBytes,
 	}
 }

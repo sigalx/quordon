@@ -4,7 +4,7 @@ set -eu
 # Only synthetic fixture values are parsed here. None contains a JSON bracket;
 # sed extracts the exact server-issued tuple without normalizing its values.
 character_page_request() {
-  character_page_body="{\"kind\":\"keyset\",\"profile\":\"analytics\",\"shape\":\"$character_shape\",\"query\":{\"source\":{\"schema\":\"application\",\"name\":\"${character_source:-character_keys}\"},\"projection\":$character_projection,$character_filter\"order_by\":$character_order,\"limit\":${character_limit:-1}},\"page\":$character_page}"
+  character_page_body="{\"kind\":\"keyset\",\"profile\":\"analytics\",\"datasource\":\"integration-mysql\",\"shape\":\"$character_shape\",\"query\":{\"source\":{\"schema\":\"application\",\"name\":\"${character_source:-character_keys}\"},\"projection\":$character_projection,$character_filter\"order_by\":$character_order,\"limit\":${character_limit:-1}},\"page\":$character_page}"
   character_http_response=$(curl --silent --show-error --write-out '\n%{http_code}' \
     --user integration-client:password \
     --header 'Content-Type: application/json' \
@@ -125,7 +125,7 @@ character_page_request | grep --quiet '"code":"DENIED_QUERY_FEATURE"'
 # curated-shape matching, including hidden metadata and filter-only references.
 character_description=$(curl --fail --silent --show-error \
   --user integration-client:password \
-  'http://127.0.0.1:18080/schemas/application/objects/character_keys?profile=data-reader')
+  'http://127.0.0.1:18080/schemas/application/objects/character_keys?profile=data-reader&datasource=integration-mysql')
 printf '%s\n' "$character_description" | grep --quiet '"name":"unicode_label"'
 if printf '%s\n' "$character_description" | grep --quiet 'hidden_value'; then
   echo 'Character-key metadata exposed a denied field.' >&2
@@ -136,7 +136,7 @@ for character_denied_query in \
   '{"source":{"schema":"application","name":"character_keys"},"projection":[{"kind":"field","field":"id"}],"filter":{"kind":"predicate","field":"hidden_value","operator":"eq","values":[{"type":"string","value":"hidden"}]},"limit":1}'; do
   character_denied_response=$(curl --silent --show-error --write-out '\n%{http_code}' \
     --user integration-client:password --header 'Content-Type: application/json' \
-    --data "{\"profile\":\"data-reader\",\"query\":$character_denied_query}" \
+    --data "{\"profile\":\"data-reader\",\"datasource\":\"integration-mysql\",\"query\":$character_denied_query}" \
     http://127.0.0.1:18080/queries/select)
   printf '%s\n' "$character_denied_response" | tail -n 1 | grep --quiet '^403$'
   printf '%s\n' "$character_denied_response" | grep --quiet '"code":"DENIED_FIELD"'

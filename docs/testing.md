@@ -89,8 +89,9 @@ Contract suite использует `libopenapi-validator`: он загружа�
 SELECT request fixtures, что runtime decoder, и positive/negative SELECT
 response fixtures по конкретному HTTP operation. Для metadata endpoints suite
 также фиксирует документированное semantic-расширение закрытого query string:
-OpenAPI распознаёт operation и обязательный `profile`, а handler дополнительно
-отклоняет неизвестные параметры, повторный `profile` и невалидный UTF-8 с `400`.
+OpenAPI распознаёт operation и обязательные `profile`/`datasource`, а handler
+дополнительно отклоняет неизвестные, case-folded и повторные параметры, а также
+невалидный UTF-8 с `400`.
 Positive contract fixtures проходят через реальные handlers для успешных
 `list_objects`, `describe_object`, `describe_object_statistics`, `select`,
 `aggregate` и `list_query_shapes`, после чего их фактические `200`
@@ -357,8 +358,8 @@ capacity после allow decision сохраняет парный completion с
 `error_kind: capacity` без вызова adapter.
 
 Для keyset отдельно проверяются startup audit-size preflight без adapter call,
-наличие имени shape уже в allow decision и замена сырого неназначенного profile
-на hash+byte-length в denial event.
+наличие имени shape уже в allow decision и замена сырых неназначенных profile и
+datasource на отдельные hash+byte-length в denial event.
 
 ## Fuzz и property tests
 
@@ -380,6 +381,10 @@ capacity после allow decision сохраняет парный completion с
   несогласованности policy с DSN;
 - отсутствие raw driver errors во встроенном MySQL logger;
 - isolation нескольких datasources;
+- независимые binding quotas для одного profile на разных datasources при
+  сохранении global concurrency limit;
+- явная маршрутизация metadata, EXPLAIN, SELECT, aggregate, keyset и discovery
+  одной policy profile в различимые test/RC databases;
 - pool и concurrency limits;
 - parameter binding и database types;
 - timeout и connection cleanup;

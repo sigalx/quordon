@@ -21,7 +21,7 @@ func numericPolicyFixture(t *testing.T) (config.Config, queryspec.ValidatedAggre
 		OrderBy:    []config.AggregateShapeOrder{{Kind: "numeric_bucket", Alias: "status_bucket", Direction: "asc"}}, MaximumLimit: 10, MaximumRowsExaminedPerScan: 100,
 		AllowTemporaryTable: policyBoolPointer(true), AllowFilesort: policyBoolPointer(true),
 	}}
-	cfg := config.Config{Version: 1, HardLimits: original.HardLimits(), Principals: map[string]config.Principal{"client": {Profiles: []string{"analytics"}}}, Profiles: map[string]config.Profile{"analytics": profile}}
+	cfg := config.Config{Version: 1, HardLimits: original.HardLimits(), Principals: map[string]config.Principal{"client": {Profiles: []string{"analytics"}, Datasources: []string{"mysql"}}}, Profiles: map[string]config.Profile{"analytics": profile}}
 	limit := 5
 	query := validateAggregateForPolicy(t, queryspec.AggregateSpec{Mode: "grouped", Source: queryspec.ResourceRef{Schema: "app", Name: "orders"},
 		Projection: []queryspec.AggregateOutput{{Kind: "numeric_bucket", Field: "status", Alias: "STATUS_BUCKET"}, {Kind: "measure", Function: "count_all", Alias: "total"}},
@@ -33,7 +33,7 @@ func TestNumericBucketAuthorizationSnapshotAndDiscovery(t *testing.T) {
 	cfg, query := numericPolicyFixture(t)
 	snapshot := NewSnapshot(cfg)
 	cfg.Profiles["analytics"].Query.AggregateShapes[0].Projection[0].Boundaries[0] = "-99"
-	token, err := snapshot.AuthorizeAggregate("client", "analytics", query, domain.IdentifierSemantics{})
+	token, err := snapshot.AuthorizeAggregate(bindingForTest(t, snapshot, "client", "analytics", "mysql", domain.OperationAggregate), query, domain.IdentifierSemantics{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,11 +48,11 @@ func TestNumericBucketAuthorizationSnapshotAndDiscovery(t *testing.T) {
 	if token.NumericBoundaries()["status_bucket"][0] != "-1" {
 		t.Fatal("token has mutable alias")
 	}
-	discovery, err := snapshot.BuildQueryShapeDiscovery("analytics", "adapter", domain.IdentifierSemantics{})
+	discovery, err := snapshot.BuildQueryShapeDiscovery("analytics", "mysql", "adapter", domain.IdentifierSemantics{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	allowed, err := snapshot.AuthorizeQueryShapeList("client", "credential", "analytics", &discovery)
+	allowed, err := snapshot.AuthorizeQueryShapeList(bindingForTest(t, snapshot, "client", "analytics", "mysql", domain.OperationListQueryShapes), "credential", &discovery)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,8 +61,8 @@ func TestNumericBucketAuthorizationSnapshotAndDiscovery(t *testing.T) {
 		t.Fatalf("payload=%s error=%v", payload, err)
 	}
 	changed := NewSnapshot(cfg)
-	newDiscovery, err := changed.BuildQueryShapeDiscovery("analytics", "adapter", domain.IdentifierSemantics{})
-	if err != nil || newDiscovery.shapeSetHash == discovery.shapeSetHash {
+	newDiscovery, err := changed.BuildQueryShapeDiscovery("analytics", "mysql", "adapter", domain.IdentifierSemantics{})
+	if err != nil || newDiscovery.document.shapeSetHash == discovery.document.shapeSetHash {
 		t.Fatalf("boundary hash did not change: %v", err)
 	}
 	if (AuthorizedAggregate{}).Operation() == domain.OperationAggregate {
@@ -90,7 +90,8 @@ func TestNumericBucketAuthorizationDenialsAndBudget(t *testing.T) {
 				p.Query.AggregateShapes = append(p.Query.AggregateShapes, p.Query.AggregateShapes[0])
 			}
 			cfg.Profiles["analytics"] = p
-			if _, err := NewSnapshot(cfg).AuthorizeAggregate("client", "analytics", query, domain.IdentifierSemantics{}); err == nil {
+			candidate := NewSnapshot(cfg)
+			if _, err := candidate.AuthorizeAggregate(bindingForTest(t, candidate, "client", "analytics", "mysql", domain.OperationAggregate), query, domain.IdentifierSemantics{}); err == nil {
 				t.Fatal("accepted forbidden aggregate")
 			}
 		})

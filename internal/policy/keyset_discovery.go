@@ -47,14 +47,6 @@ func (s publicQueryShape) MarshalJSON() ([]byte, error) {
 	return nil, errors.New("invalid public query-shape union")
 }
 
-type queryShapeListResponse struct {
-	PolicyProfile string             `json:"policy_profile"`
-	PolicyVersion string             `json:"policy_version"`
-	Datasource    string             `json:"datasource"`
-	Adapter       string             `json:"adapter"`
-	Shapes        []publicQueryShape `json:"shapes"`
-}
-
 func buildPublicKeysetQueryShapes(
 	configured []config.KeysetSelectShape,
 	semantics domain.IdentifierSemantics,
@@ -126,6 +118,32 @@ func encodeQueryShapeResponse(
 	keysets []publicKeysetQueryShape,
 	maximum int,
 ) ([]byte, string, error) {
+	shapesPayload, shapeSetHash, err := encodeQueryShapeDocument(profileName, aggregates, keysets, maximum)
+	if err != nil {
+		return nil, "", err
+	}
+	prefix, resultBytes, err := encodeQueryShapeEnvelope(
+		profileName, policyVersion, datasource, adapter, len(shapesPayload), maximum,
+	)
+	if err != nil {
+		return nil, "", err
+	}
+	payload := make([]byte, 0, resultBytes)
+	payload = append(payload, prefix...)
+	payload = append(payload, shapesPayload...)
+	payload = append(payload, '}')
+	if len(payload) != resultBytes {
+		return nil, "", errors.New("public query-shape size invariant failed")
+	}
+	return payload, shapeSetHash, nil
+}
+
+func encodeQueryShapeDocument(
+	profileName string,
+	aggregates []publicAggregateQueryShape,
+	keysets []publicKeysetQueryShape,
+	maximum int,
+) ([]byte, string, error) {
 	shapes := make([]publicQueryShape, 0, len(aggregates)+len(keysets))
 	for index := range aggregates {
 		shape := aggregates[index]
@@ -138,15 +156,11 @@ func encodeQueryShapeResponse(
 	slices.SortFunc(shapes, func(a, b publicQueryShape) int {
 		return strings.Compare(publicQueryShapeName(a), publicQueryShapeName(b))
 	})
-	response := queryShapeListResponse{
-		PolicyProfile: profileName, PolicyVersion: policyVersion, Datasource: datasource,
-		Adapter: adapter, Shapes: shapes,
-	}
-	encodedSize, ok := queryShapeListResponseSize(response, maximum)
+	encodedSize, ok := queryShapeArraySize(shapes, maximum)
 	if !ok || len(shapes) == 0 {
 		return nil, "", fmt.Errorf("profile %q query-shape response exceeds max_result_bytes or is empty", profileName)
 	}
-	payload, err := json.Marshal(response)
+	payload, err := json.Marshal(shapes)
 	if err != nil {
 		return nil, "", fmt.Errorf("marshal public query shapes: %w", err)
 	}
@@ -158,6 +172,82 @@ func encodeQueryShapeResponse(
 		return nil, "", err
 	}
 	return payload, shapeSetHash, nil
+}
+
+func encodeQueryShapeEnvelope(
+	profileName, policyVersion, datasource, adapter string,
+	shapesPayloadBytes, maximum int,
+) ([]byte, int, error) {
+	size := newBoundedSize(maximum)
+	size.add(len(`{"policy_profile":`))
+	size.string(profileName)
+	size.add(len(`,"policy_version":`))
+	size.string(policyVersion)
+	size.add(len(`,"datasource":`))
+	size.string(datasource)
+	size.add(len(`,"adapter":`))
+	size.string(adapter)
+	size.add(len(`,"shapes":`))
+	size.add(shapesPayloadBytes)
+	size.add(1) // }
+	if !size.ok || shapesPayloadBytes < 0 {
+		return nil, 0, fmt.Errorf("profile %q query-shape response exceeds max_result_bytes or is empty", profileName)
+	}
+	prefixSize := size.value - shapesPayloadBytes - 1
+	prefix := make([]byte, 0, prefixSize)
+	prefix = append(prefix, `{"policy_profile":`...)
+	var err error
+	prefix, err = appendQueryShapeJSONString(prefix, profileName)
+	if err != nil {
+		return nil, 0, err
+	}
+	prefix = append(prefix, `,"policy_version":`...)
+	prefix, err = appendQueryShapeJSONString(prefix, policyVersion)
+	if err != nil {
+		return nil, 0, err
+	}
+	prefix = append(prefix, `,"datasource":`...)
+	prefix, err = appendQueryShapeJSONString(prefix, datasource)
+	if err != nil {
+		return nil, 0, err
+	}
+	prefix = append(prefix, `,"adapter":`...)
+	prefix, err = appendQueryShapeJSONString(prefix, adapter)
+	if err != nil {
+		return nil, 0, err
+	}
+	prefix = append(prefix, `,"shapes":`...)
+	if len(prefix) != prefixSize {
+		return nil, 0, errors.New("public query-shape envelope size invariant failed")
+	}
+	return prefix, size.value, nil
+}
+
+func appendQueryShapeJSONString(destination []byte, value string) ([]byte, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("marshal public query-shape envelope: %w", err)
+	}
+	return append(destination, encoded...), nil
+}
+
+func queryShapeArraySize(shapes []publicQueryShape, maximum int) (int, bool) {
+	size := newBoundedSize(maximum)
+	size.add(1) // [
+	for index, shape := range shapes {
+		if index != 0 {
+			size.add(1)
+		}
+		if shape.aggregate != nil && shape.keyset == nil {
+			queryShapeEncodedSize(size, *shape.aggregate)
+		} else if shape.keyset != nil && shape.aggregate == nil {
+			keysetQueryShapeEncodedSize(size, *shape.keyset)
+		} else {
+			size.ok = false
+		}
+	}
+	size.add(1) // ]
+	return size.value, size.ok
 }
 
 func publicQueryShapeSetHash(shapes []publicQueryShape) (string, error) {
@@ -284,33 +374,6 @@ func publicQueryShapeName(shape publicQueryShape) string {
 		return shape.keyset.Name
 	}
 	return ""
-}
-
-func queryShapeListResponseSize(response queryShapeListResponse, maximum int) (int, bool) {
-	size := newBoundedSize(maximum)
-	size.add(len(`{"policy_profile":`))
-	size.string(response.PolicyProfile)
-	size.add(len(`,"policy_version":`))
-	size.string(response.PolicyVersion)
-	size.add(len(`,"datasource":`))
-	size.string(response.Datasource)
-	size.add(len(`,"adapter":`))
-	size.string(response.Adapter)
-	size.add(len(`,"shapes":[`))
-	for index, shape := range response.Shapes {
-		if index != 0 {
-			size.add(1)
-		}
-		if shape.aggregate != nil && shape.keyset == nil {
-			queryShapeEncodedSize(size, *shape.aggregate)
-		} else if shape.keyset != nil && shape.aggregate == nil {
-			keysetQueryShapeEncodedSize(size, *shape.keyset)
-		} else {
-			size.ok = false
-		}
-	}
-	size.add(len(`]}`))
-	return size.value, size.ok
 }
 
 func keysetQueryShapeEncodedSize(size *boundedSize, shape publicKeysetQueryShape) {

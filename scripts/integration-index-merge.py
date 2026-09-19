@@ -97,7 +97,7 @@ for algorithm, group, predicate, values, count in (
                 "projection": [{"kind": "measure", "function": "count_all", "alias": algorithm + "_" + variant}],
                 "filter": filter_spec(group, predicate, values)}
         before = main_select_count()
-        result = request("/queries/aggregate", {"profile": "index-merge-reader", "query": spec},
+        result = request("/queries/aggregate", {"profile": "index-merge-reader", "datasource": "integration-mysql", "query": spec},
                          status=422 if variant == "mismatch" else 200)
         assert_merge_preflight(algorithm)
         if variant == "mismatch":
@@ -115,7 +115,7 @@ for variant in ("unconstrained", "first", "second", "mismatch", "filesort_reject
                            {"kind": "field", "field": "id", "alias": variant}],
             "filter": filter_spec(), "order_by": [{"field": field, "direction": "asc"} for field in ("a", "b", "id")],
             "limit": 100}
-    body = {"kind": "keyset", "profile": "index-merge-reader", "shape": "merge_pages_" + variant,
+    body = {"kind": "keyset", "profile": "index-merge-reader", "datasource": "integration-mysql", "shape": "merge_pages_" + variant,
             "query": spec, "page": {"kind": "first"}}
     before = main_select_count()
     denied = variant in ("mismatch", "filesort_rejected")
@@ -145,13 +145,13 @@ for operation in ("aggregate", "keyset"):
         spec = {"source": {"schema": "application", "name": "comma_rows"}, "filter": predicate}
         if operation == "aggregate":
             spec.update(mode="scalar", projection=[{"kind": "measure", "function": "count_all", "alias": alias}])
-            body = {"profile": "index-merge-reader", "query": spec}
+            body = {"profile": "index-merge-reader", "datasource": "integration-mysql", "query": spec}
             endpoint, expected_rows = "/queries/aggregate", [["10"]]
         else:
             spec.update(projection=[{"kind": "field", "field": "id", "alias": alias},
                                     {"kind": "field", "field": "a"}],
                         order_by=[{"field": "id", "direction": "asc"}], limit=20)
-            body = {"kind": "keyset", "profile": "index-merge-reader", "shape": "comma_pages_" + variant,
+            body = {"kind": "keyset", "profile": "index-merge-reader", "datasource": "integration-mysql", "shape": "comma_pages_" + variant,
                     "query": spec, "page": {"kind": "first"}}
             endpoint = "/queries/select"
             expected_rows = [[str(n + 1), "3"] for n in range(3, 1000, 100)]
@@ -182,14 +182,14 @@ with tempfile.TemporaryDirectory(prefix="quordon-native-index-") as directory:
                     "filter": filter_spec()}
             if operation == "aggregate":
                 spec.update(mode="scalar", projection=[{"kind": "measure", "function": "count_all", "alias": alias}])
-                endpoint, body = "/queries/aggregate", {"profile": "index-merge-reader", "query": spec}
+                endpoint, body = "/queries/aggregate", {"profile": "index-merge-reader", "datasource": "integration-mysql", "query": spec}
             else:
                 spec.update(projection=[{"kind": "field", "field": "a"}, {"kind": "field", "field": "b"},
                                         {"kind": "field", "field": "id", "alias": alias}],
                             order_by=[{"field": field, "direction": "asc"} for field in ("a", "b", "id")],
                             limit=100)
                 endpoint = "/queries/select"
-                body = {"kind": "keyset", "profile": "index-merge-reader", "shape": "ambiguous_pages_" + variant,
+                body = {"kind": "keyset", "profile": "index-merge-reader", "datasource": "integration-mysql", "shape": "ambiguous_pages_" + variant,
                         "query": spec, "page": {"kind": "first"}}
             before = main_select_count()
             result = request(endpoint, body, status=422)
@@ -209,12 +209,12 @@ with tempfile.TemporaryDirectory(prefix="quordon-native-index-") as directory:
         spec = {"source": {"schema": "application", "name": "physical_alias_view"}, "filter": predicate}
         if operation == "aggregate":
             spec.update(mode="scalar", projection=[{"kind": "measure", "function": "count_all", "alias": "alias_count"}])
-            endpoint, body = "/queries/aggregate", {"profile": "index-merge-reader", "query": spec}
+            endpoint, body = "/queries/aggregate", {"profile": "index-merge-reader", "datasource": "integration-mysql", "query": spec}
         else:
             spec.update(projection=[{"kind": "field", "field": "id"}, {"kind": "field", "field": "b"}],
                         order_by=[{"field": "id", "direction": "asc"}], limit=20)
             endpoint = "/queries/select"
-            body = {"kind": "keyset", "profile": "index-merge-reader", "shape": "physical_alias_pages",
+            body = {"kind": "keyset", "profile": "index-merge-reader", "datasource": "integration-mysql", "shape": "physical_alias_pages",
                     "query": spec, "page": {"kind": "first"}}
         before = main_select_count()
         result = request(endpoint, body, status=503)

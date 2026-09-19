@@ -17,12 +17,12 @@ func TestSnapshotOwnsIndependentPolicyData(t *testing.T) {
 		Version:    7,
 		PolicyHash: "original-hash",
 		Principals: map[string]config.Principal{
-			"client": {Profiles: []string{"explain"}},
+			"client": {Profiles: []string{"explain"}, Datasources: []string{"mysql"}},
 		},
 		Profiles: map[string]config.Profile{
 			"explain": {
-				Datasource: "mysql",
-				Operations: []domain.Operation{domain.OperationExplainSelect},
+				Datasources: []string{"mysql"},
+				Operations:  []domain.Operation{domain.OperationExplainSelect},
 				Resources: config.ResourcePolicy{
 					Schemas: config.PatternPolicy{Allow: []string{"app"}, Deny: []string{"private"}},
 					Objects: config.PatternPolicy{Allow: []string{"app.*"}, Deny: []string{"app.secret"}},
@@ -43,6 +43,7 @@ func TestSnapshotOwnsIndependentPolicyData(t *testing.T) {
 	}
 	snapshot := NewSnapshot(cfg)
 	wantProfiles := snapshot.PrincipalProfiles("client")
+	wantDatasources := snapshot.PrincipalDatasources("client")
 	wantProfile, ok := snapshot.Profile("explain")
 	if !ok {
 		t.Fatal("snapshot profile is missing")
@@ -50,9 +51,11 @@ func TestSnapshotOwnsIndependentPolicyData(t *testing.T) {
 
 	principal := cfg.Principals["client"]
 	principal.Profiles[0] = "mutated"
-	cfg.Principals["client"] = config.Principal{Profiles: []string{"replacement"}}
+	principal.Datasources[0] = "mutated"
+	cfg.Principals["client"] = config.Principal{Profiles: []string{"replacement"}, Datasources: []string{"mysql"}}
 
 	profile := cfg.Profiles["explain"]
+	profile.Datasources[0] = "mutated"
 	profile.Operations[0] = "mutated"
 	profile.Resources.Schemas.Allow[0] = "mutated"
 	profile.Resources.Schemas.Deny[0] = "mutated"
@@ -67,10 +70,13 @@ func TestSnapshotOwnsIndependentPolicyData(t *testing.T) {
 	profile.Query.AggregateShapes[0].OrderBy[0].Alias = "mutated"
 	*profile.Query.AggregateShapes[0].AllowTemporaryTable = false
 	*profile.Query.AggregateShapes[0].AllowFilesort = true
-	cfg.Profiles["explain"] = config.Profile{Datasource: "replacement"}
+	cfg.Profiles["explain"] = config.Profile{Datasources: []string{"replacement"}}
 
 	if got := snapshot.PrincipalProfiles("client"); !reflect.DeepEqual(got, wantProfiles) {
 		t.Fatalf("principal profiles = %#v, want %#v", got, wantProfiles)
+	}
+	if got := snapshot.PrincipalDatasources("client"); !reflect.DeepEqual(got, wantDatasources) {
+		t.Fatalf("principal datasources = %#v, want %#v", got, wantDatasources)
 	}
 	gotProfile, ok := snapshot.Profile("explain")
 	if !ok || !reflect.DeepEqual(gotProfile, wantProfile) {
@@ -79,6 +85,9 @@ func TestSnapshotOwnsIndependentPolicyData(t *testing.T) {
 
 	returnedProfiles := snapshot.PrincipalProfiles("client")
 	returnedProfiles[0] = "accessor-mutation"
+	returnedDatasources := snapshot.PrincipalDatasources("client")
+	returnedDatasources[0] = "accessor-mutation"
+	gotProfile.Datasources[0] = "accessor-mutation"
 	gotProfile.Operations[0] = "accessor-mutation"
 	gotProfile.Resources.Fields.Deny[0] = "accessor-mutation"
 	gotProfile.Query.AllowedAggregates[0] = "accessor-mutation"
@@ -88,6 +97,9 @@ func TestSnapshotOwnsIndependentPolicyData(t *testing.T) {
 	*gotProfile.Query.AggregateShapes[0].AllowFilesort = true
 	if got := snapshot.PrincipalProfiles("client"); !reflect.DeepEqual(got, wantProfiles) {
 		t.Fatalf("principal accessor exposed shared data: %#v", got)
+	}
+	if got := snapshot.PrincipalDatasources("client"); !reflect.DeepEqual(got, wantDatasources) {
+		t.Fatalf("principal datasource accessor exposed shared data: %#v", got)
 	}
 	gotProfile, _ = snapshot.Profile("explain")
 	if !reflect.DeepEqual(gotProfile, wantProfile) {
@@ -104,10 +116,10 @@ func TestAuthorizeExplainAppliesDenyBeforeAllow(t *testing.T) {
 	}
 	cfg := config.Config{
 		Version: 1, PolicyHash: "hash", HardLimits: limits,
-		Principals:  map[string]config.Principal{"client": {Profiles: []string{"explain"}}},
+		Principals:  map[string]config.Principal{"client": {Profiles: []string{"explain"}, Datasources: []string{"mysql"}}},
 		Datasources: map[string]config.Datasource{"mysql": {Adapter: domain.AdapterMySQL8}},
 		Profiles: map[string]config.Profile{"explain": {
-			Datasource: "mysql", Operations: []domain.Operation{domain.OperationExplainSelect}, Limits: limits,
+			Datasources: []string{"mysql"}, Operations: []domain.Operation{domain.OperationExplainSelect}, Limits: limits,
 			Resources: config.ResourcePolicy{
 				Schemas: config.PatternPolicy{Allow: []string{"application"}},
 				Objects: config.PatternPolicy{Allow: []string{"application.*"}},
@@ -125,7 +137,8 @@ func TestAuthorizeExplainAppliesDenyBeforeAllow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = NewSnapshot(cfg).AuthorizeExplain("client", "explain", validated, domain.IdentifierSemantics{})
+	snapshot := NewSnapshot(cfg)
+	_, err = snapshot.AuthorizeExplain(bindingForTest(t, snapshot, "client", "explain", "mysql", domain.OperationExplainSelect), validated, domain.IdentifierSemantics{})
 	var reason string
 	if !IsDenial(err, &reason) || reason != ReasonDeniedField {
 		t.Fatalf("error = %v, reason = %q, want %s", err, reason, ReasonDeniedField)
@@ -141,10 +154,10 @@ func TestAuthorizeExplainAppliesMySQLFieldDenyCaseInsensitively(t *testing.T) {
 	}
 	cfg := config.Config{
 		Version: 1, PolicyHash: "hash", HardLimits: limits,
-		Principals:  map[string]config.Principal{"client": {Profiles: []string{"explain"}}},
+		Principals:  map[string]config.Principal{"client": {Profiles: []string{"explain"}, Datasources: []string{"mysql"}}},
 		Datasources: map[string]config.Datasource{"mysql": {Adapter: domain.AdapterMySQL8}},
 		Profiles: map[string]config.Profile{"explain": {
-			Datasource: "mysql", Operations: []domain.Operation{domain.OperationExplainSelect}, Limits: limits,
+			Datasources: []string{"mysql"}, Operations: []domain.Operation{domain.OperationExplainSelect}, Limits: limits,
 			Resources: config.ResourcePolicy{
 				Schemas: config.PatternPolicy{Allow: []string{"application"}},
 				Objects: config.PatternPolicy{Allow: []string{"application.users"}},
@@ -162,9 +175,9 @@ func TestAuthorizeExplainAppliesMySQLFieldDenyCaseInsensitively(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = NewSnapshot(cfg).AuthorizeExplain(
-		"client",
-		"explain",
+	snapshot := NewSnapshot(cfg)
+	_, err = snapshot.AuthorizeExplain(
+		bindingForTest(t, snapshot, "client", "explain", "mysql", domain.OperationExplainSelect),
 		validated,
 		domain.IdentifierSemantics{CaseInsensitiveFields: true},
 	)
@@ -183,9 +196,9 @@ func TestAuthorizeExplainAppliesObjectDenyUsingServerCaseSemantics(t *testing.T)
 	}
 	cfg := config.Config{
 		Version: 1, PolicyHash: "hash", HardLimits: limits,
-		Principals: map[string]config.Principal{"client": {Profiles: []string{"explain"}}},
+		Principals: map[string]config.Principal{"client": {Profiles: []string{"explain"}, Datasources: []string{"mysql"}}},
 		Profiles: map[string]config.Profile{"explain": {
-			Datasource: "mysql", Operations: []domain.Operation{domain.OperationExplainSelect}, Limits: limits,
+			Datasources: []string{"mysql"}, Operations: []domain.Operation{domain.OperationExplainSelect}, Limits: limits,
 			Resources: config.ResourcePolicy{
 				Schemas: config.PatternPolicy{Allow: []string{"application"}},
 				Objects: config.PatternPolicy{
@@ -202,9 +215,9 @@ func TestAuthorizeExplainAppliesObjectDenyUsingServerCaseSemantics(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = NewSnapshot(cfg).AuthorizeExplain(
-		"client",
-		"explain",
+	snapshot := NewSnapshot(cfg)
+	_, err = snapshot.AuthorizeExplain(
+		bindingForTest(t, snapshot, "client", "explain", "mysql", domain.OperationExplainSelect),
 		validated,
 		domain.IdentifierSemantics{
 			CaseInsensitiveSchemas: true,
@@ -221,10 +234,10 @@ func TestAuthorizeExplainAppliesObjectDenyUsingServerCaseSemantics(t *testing.T)
 func TestAuthorizeExplainRejectsUnassignedProfile(t *testing.T) {
 	snapshot := NewSnapshot(config.Config{
 		Version:    1,
-		Principals: map[string]config.Principal{"client": {Profiles: []string{"assigned"}}},
+		Principals: map[string]config.Principal{"client": {Profiles: []string{"assigned"}, Datasources: []string{"mysql"}}},
 		Profiles:   map[string]config.Profile{"assigned": {}},
 	})
-	_, err := snapshot.AuthorizeExplain("client", "other", queryspec.Validated{}, domain.IdentifierSemantics{})
+	_, err := snapshot.AuthorizeBinding("client", "other", "mysql", domain.OperationExplainSelect)
 	var reason string
 	if !IsDenial(err, &reason) || reason != ReasonDeniedOperation {
 		t.Fatalf("error = %v, reason = %q", err, reason)
@@ -240,11 +253,11 @@ func TestAuthorizedQueriesAreOperationBoundAndSelectIsValidatedAtPolicyBoundary(
 	}
 	snapshot := NewSnapshot(config.Config{
 		Version: 1, HardLimits: limits,
-		Principals: map[string]config.Principal{"client": {Profiles: []string{"both"}}},
+		Principals: map[string]config.Principal{"client": {Profiles: []string{"both"}, Datasources: []string{"mysql"}}},
 		Profiles: map[string]config.Profile{"both": {
-			Datasource: "mysql",
-			Operations: []domain.Operation{domain.OperationExplainSelect, domain.OperationSelect},
-			Limits:     limits,
+			Datasources: []string{"mysql"},
+			Operations:  []domain.Operation{domain.OperationExplainSelect, domain.OperationSelect},
+			Limits:      limits,
 			Resources: config.ResourcePolicy{
 				Schemas: config.PatternPolicy{Allow: []string{"app"}},
 				Objects: config.PatternPolicy{Allow: []string{"app.orders"}},
@@ -265,14 +278,14 @@ func TestAuthorizedQueriesAreOperationBoundAndSelectIsValidatedAtPolicyBoundary(
 		Source:     queryspec.ResourceRef{Schema: "app", Name: "orders"},
 		Projection: []queryspec.Selection{{Kind: "field", Field: "id"}},
 	})
-	explain, err := snapshot.AuthorizeExplain("client", "both", fieldQuery, domain.IdentifierSemantics{})
+	explain, err := snapshot.AuthorizeExplain(bindingForTest(t, snapshot, "client", "both", "mysql", domain.OperationExplainSelect), fieldQuery, domain.IdentifierSemantics{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if explain.Operation() != domain.OperationExplainSelect {
 		t.Fatalf("explain token operation = %q", explain.Operation())
 	}
-	selectQuery, err := snapshot.AuthorizeSelect("client", "both", fieldQuery, domain.IdentifierSemantics{})
+	selectQuery, err := snapshot.AuthorizeSelect(bindingForTest(t, snapshot, "client", "both", "mysql", domain.OperationSelect), fieldQuery, domain.IdentifierSemantics{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +297,7 @@ func TestAuthorizedQueriesAreOperationBoundAndSelectIsValidatedAtPolicyBoundary(
 		Source:     queryspec.ResourceRef{Schema: "app", Name: "orders"},
 		Projection: []queryspec.Selection{{Kind: "aggregate", Function: "count"}},
 	})
-	if _, err := snapshot.AuthorizeSelect("client", "both", aggregate, domain.IdentifierSemantics{}); err == nil {
+	if _, err := snapshot.AuthorizeSelect(bindingForTest(t, snapshot, "client", "both", "mysql", domain.OperationSelect), aggregate, domain.IdentifierSemantics{}); err == nil {
 		t.Fatal("AuthorizeSelect() minted a token for an aggregate query")
 	}
 }
@@ -302,9 +315,9 @@ func TestAuthorizedQueriesAreRevalidatedUnderEffectiveLimits(t *testing.T) {
 	profileLimits.MaxOffset = 5
 	snapshot := NewSnapshot(config.Config{
 		Version: 1, HardLimits: hardLimits,
-		Principals: map[string]config.Principal{"client": {Profiles: []string{"reader"}}},
+		Principals: map[string]config.Principal{"client": {Profiles: []string{"reader"}, Datasources: []string{"mysql"}}},
 		Profiles: map[string]config.Profile{"reader": {
-			Datasource: "mysql", Operations: []domain.Operation{
+			Datasources: []string{"mysql"}, Operations: []domain.Operation{
 				domain.OperationExplainSelect, domain.OperationSelect,
 			},
 			Limits: profileLimits,
@@ -330,10 +343,10 @@ func TestAuthorizedQueriesAreRevalidatedUnderEffectiveLimits(t *testing.T) {
 		call func() (AuthorizedQuery, error)
 	}{
 		{name: "select", call: func() (AuthorizedQuery, error) {
-			return snapshot.AuthorizeSelect("client", "reader", validated, domain.IdentifierSemantics{})
+			return snapshot.AuthorizeSelect(bindingForTest(t, snapshot, "client", "reader", "mysql", domain.OperationSelect), validated, domain.IdentifierSemantics{})
 		}},
 		{name: "explain", call: func() (AuthorizedQuery, error) {
-			return snapshot.AuthorizeExplain("client", "reader", validated, domain.IdentifierSemantics{})
+			return snapshot.AuthorizeExplain(bindingForTest(t, snapshot, "client", "reader", "mysql", domain.OperationExplainSelect), validated, domain.IdentifierSemantics{})
 		}},
 	} {
 		t.Run(authorize.name+" normalizes limit", func(t *testing.T) {
@@ -358,9 +371,7 @@ func TestAuthorizedQueriesAreRevalidatedUnderEffectiveLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := snapshot.AuthorizeSelect(
-		"client", "reader", tooManyFields, domain.IdentifierSemantics{},
-	); err == nil {
+	if _, err := snapshot.AuthorizeSelect(bindingForTest(t, snapshot, "client", "reader", "mysql", domain.OperationSelect), tooManyFields, domain.IdentifierSemantics{}); err == nil {
 		t.Fatal("AuthorizeSelect() accepted a query validated above the profile projection limit")
 	}
 
@@ -373,9 +384,7 @@ func TestAuthorizedQueriesAreRevalidatedUnderEffectiveLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := snapshot.AuthorizeSelect(
-		"client", "reader", largeOffset, domain.IdentifierSemantics{},
-	); err == nil {
+	if _, err := snapshot.AuthorizeSelect(bindingForTest(t, snapshot, "client", "reader", "mysql", domain.OperationSelect), largeOffset, domain.IdentifierSemantics{}); err == nil {
 		t.Fatal("AuthorizeSelect() accepted a query validated above the profile offset limit")
 	}
 }
@@ -387,9 +396,9 @@ func TestAuthorizeSchemaOperationsAreBoundToAllowedResources(t *testing.T) {
 		MaxResultBytes: 1000, MaxOffset: 10, MaxConcurrency: 1}
 	snapshot := NewSnapshot(config.Config{
 		Version: 1, HardLimits: limits,
-		Principals: map[string]config.Principal{"client": {Profiles: []string{"reader"}}},
+		Principals: map[string]config.Principal{"client": {Profiles: []string{"reader"}, Datasources: []string{"mysql"}}},
 		Profiles: map[string]config.Profile{"reader": {
-			Datasource: "mysql", Operations: []domain.Operation{
+			Datasources: []string{"mysql"}, Operations: []domain.Operation{
 				domain.OperationListObjects, domain.OperationDescribeObject,
 			}, Limits: limits,
 			Resources: config.ResourcePolicy{
@@ -399,8 +408,7 @@ func TestAuthorizeSchemaOperationsAreBoundToAllowedResources(t *testing.T) {
 			},
 		}},
 	})
-	list, err := snapshot.AuthorizeListObjects(
-		"client", "reader", "app",
+	list, err := snapshot.AuthorizeListObjects(bindingForTest(t, snapshot, "client", "reader", "mysql", domain.OperationListObjects), "app",
 		domain.IdentifierSemantics{CaseInsensitiveFields: true},
 	)
 	if err != nil {
@@ -409,8 +417,7 @@ func TestAuthorizeSchemaOperationsAreBoundToAllowedResources(t *testing.T) {
 	if list.Operation() != domain.OperationListObjects || !list.AllowsObject("orders") || list.AllowsObject("secret") {
 		t.Fatalf("unexpected object policy result")
 	}
-	authorized, err := snapshot.AuthorizeDescribeObject(
-		"client", "reader", queryspec.ResourceRef{Schema: "app", Name: "orders"},
+	authorized, err := snapshot.AuthorizeDescribeObject(bindingForTest(t, snapshot, "client", "reader", "mysql", domain.OperationDescribeObject), queryspec.ResourceRef{Schema: "app", Name: "orders"},
 		domain.IdentifierSemantics{CaseInsensitiveFields: true},
 	)
 	if err != nil {
@@ -420,8 +427,7 @@ func TestAuthorizeSchemaOperationsAreBoundToAllowedResources(t *testing.T) {
 		!authorized.AllowsField("id") || authorized.AllowsField("PASSWORD") {
 		t.Fatalf("unexpected field policy result")
 	}
-	if _, err := snapshot.AuthorizeDescribeObject(
-		"client", "reader", queryspec.ResourceRef{Schema: "app", Name: "secret"},
+	if _, err := snapshot.AuthorizeDescribeObject(bindingForTest(t, snapshot, "client", "reader", "mysql", domain.OperationDescribeObject), queryspec.ResourceRef{Schema: "app", Name: "secret"},
 		domain.IdentifierSemantics{},
 	); err == nil {
 		t.Fatal("denied object received an authorization token")
@@ -435,9 +441,9 @@ func TestAuthorizeSchemaOperationsRejectInvalidResourcesBeforeMintingToken(t *te
 		MaxResultBytes: 1000, MaxOffset: 10, MaxConcurrency: 1}
 	snapshot := NewSnapshot(config.Config{
 		Version: 1, HardLimits: limits,
-		Principals: map[string]config.Principal{"client": {Profiles: []string{"metadata"}}},
+		Principals: map[string]config.Principal{"client": {Profiles: []string{"metadata"}, Datasources: []string{"mysql"}}},
 		Profiles: map[string]config.Profile{"metadata": {
-			Datasource: "mysql", Operations: []domain.Operation{
+			Datasources: []string{"mysql"}, Operations: []domain.Operation{
 				domain.OperationListObjects, domain.OperationDescribeObject,
 			}, Limits: limits,
 			Resources: config.ResourcePolicy{
@@ -449,9 +455,7 @@ func TestAuthorizeSchemaOperationsRejectInvalidResourcesBeforeMintingToken(t *te
 	})
 
 	for _, schema := range []string{"", "not-portable"} {
-		if _, err := snapshot.AuthorizeListObjects(
-			"client", "metadata", schema, domain.IdentifierSemantics{},
-		); err == nil {
+		if _, err := snapshot.AuthorizeListObjects(bindingForTest(t, snapshot, "client", "metadata", "mysql", domain.OperationListObjects), schema, domain.IdentifierSemantics{}); err == nil {
 			t.Fatalf("list_objects minted a token for schema %q", schema)
 		}
 	}
@@ -461,9 +465,7 @@ func TestAuthorizeSchemaOperationsRejectInvalidResourcesBeforeMintingToken(t *te
 		{Schema: "not-portable", Name: "orders"},
 		{Schema: "app", Name: "not-portable"},
 	} {
-		if _, err := snapshot.AuthorizeDescribeObject(
-			"client", "metadata", resource, domain.IdentifierSemantics{},
-		); err == nil {
+		if _, err := snapshot.AuthorizeDescribeObject(bindingForTest(t, snapshot, "client", "metadata", "mysql", domain.OperationDescribeObject), resource, domain.IdentifierSemantics{}); err == nil {
 			t.Fatalf("describe_object minted a token for resource %+v", resource)
 		}
 	}
