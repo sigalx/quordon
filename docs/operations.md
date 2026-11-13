@@ -109,6 +109,12 @@ Basic credentials передаются и проверяются в каждом
 
 Ротация password hash выполняется через secret provider. После ротации новая версия применяется при restart; hot reload credentials не входит в MVP.
 
+Basic Auth логины допускают точки и сохраняют регистр. У разных пользователей
+могут быть разные bcrypt cost в диапазоне 10–14. На каждый запрос проверяются
+все настроенные cost, включая dummy comparisons, поэтому добавление нового
+cost увеличивает стоимость аутентификации для всех запросов. Некорректный hash,
+cost вне диапазона или недоступный secret по-прежнему переводят сервис в unready.
+
 Authentication failures не различают unknown username и wrong password в HTTP response. Встроенного лимита попыток нет; защита от перебора credentials возлагается на внешний ingress и сетевой периметр.
 
 ## Health checks

@@ -370,7 +370,14 @@ components:
     basicAuth:
       type: http
       scheme: basic
-      description: HTTP Basic Auth on every application request. Quordon does not terminate TLS; remote deployments must terminate HTTPS at an external ingress.
+      description: >-
+        HTTP Basic Auth on every application request. Usernames are case-sensitive,
+        are not normalized, and follow ^[A-Za-z_][A-Za-z0-9_.-]*$; dots are allowed.
+        Configured users may have different bcrypt costs within 10-14. Every
+        authentication attempt performs one comparison per configured cost,
+        using dummy hashes for the other cost groups, without early success.
+        Quordon does not terminate TLS; remote deployments must terminate HTTPS
+        at an external ingress.
 
   headers:
     RequestId:

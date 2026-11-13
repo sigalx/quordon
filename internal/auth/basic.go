@@ -35,28 +35,29 @@ var bcryptBase64 = base64.NewEncoding(
 type credential struct {
 	principal string
 	hash      []byte
+	cost      int
+}
+
+type passwordCostGroup struct {
+	cost      int
+	dummyHash []byte
 }
 
 type Basic struct {
-	realm     string
-	users     map[string]credential
-	dummyHash []byte
-	ready     bool
+	realm      string
+	users      map[string]credential
+	costGroups []passwordCostGroup
+	ready      bool
 }
 
 func NewBasic(cfg config.BasicAuth, resolver secrets.Resolver) (*Basic, []error) {
-	dummyHash, err := bcrypt.GenerateFromPassword([]byte("quordon-dummy-password"), bcrypt.DefaultCost)
-	if err != nil {
-		panic(fmt.Sprintf("create dummy bcrypt hash: %v", err))
-	}
 	authenticator := &Basic{
-		realm:     cfg.Realm,
-		users:     make(map[string]credential, len(cfg.Users)),
-		dummyHash: dummyHash,
-		ready:     true,
+		realm: cfg.Realm,
+		users: make(map[string]credential, len(cfg.Users)),
+		ready: true,
 	}
 	var problems []error
-	expectedCost := -1
+	var costs [maxSupportedBcryptCost + 1]bool
 	for username, user := range cfg.Users {
 		hash := user.PasswordHash
 		if hash == "" {
@@ -74,21 +75,25 @@ func NewBasic(cfg config.BasicAuth, resolver secrets.Resolver) (*Basic, []error)
 			problems = append(problems, fmt.Errorf("credential for %q is not a valid bcrypt hash", username))
 			continue
 		}
-		if expectedCost == -1 {
-			expectedCost = cost
-		} else if cost != expectedCost {
-			authenticator.ready = false
-			problems = append(problems, errors.New("Basic Auth credentials must use the same bcrypt cost"))
+		costs[cost] = true
+		authenticator.users[username] = credential{principal: user.Principal, hash: []byte(hash), cost: cost}
+	}
+	if len(authenticator.users) == 0 {
+		costs[bcrypt.DefaultCost] = true
+	}
+	// At most five groups, independent of the number of configured users. Only
+	// validated, supported costs reach expensive dummy-hash generation.
+	for cost := minSupportedBcryptCost; cost <= maxSupportedBcryptCost; cost++ {
+		if !costs[cost] {
 			continue
 		}
-		authenticator.users[username] = credential{principal: user.Principal, hash: []byte(hash)}
-	}
-	if expectedCost != -1 && expectedCost != bcrypt.DefaultCost {
-		dummyHash, err = bcrypt.GenerateFromPassword([]byte("quordon-dummy-password"), expectedCost)
+		dummyHash, err := bcrypt.GenerateFromPassword([]byte("quordon-dummy-password"), cost)
 		if err != nil {
-			panic(fmt.Sprintf("create dummy bcrypt hash: %v", err))
+			authenticator.ready = false
+			problems = append(problems, errors.New("initialize Basic Auth password verification"))
+			return authenticator, problems
 		}
-		authenticator.dummyHash = dummyHash
+		authenticator.costGroups = append(authenticator.costGroups, passwordCostGroup{cost: cost, dummyHash: dummyHash})
 	}
 	return authenticator, problems
 }
@@ -97,16 +102,31 @@ func (b *Basic) Realm() string { return b.realm }
 func (b *Basic) Ready() bool   { return b.ready }
 
 func (b *Basic) Authenticate(username, password string) (Principal, error) {
+	return b.authenticate(username, password, bcrypt.CompareHashAndPassword)
+}
+
+func (b *Basic) authenticate(username, password string, compare func([]byte, []byte) error) (Principal, error) {
 	credential, exists := b.users[username]
-	hash := b.dummyHash
-	if exists {
-		hash = credential.hash
+	passwordBytes := []byte(password)
+	matched := false
+	// Always perform one comparison per configured cost, in the same order,
+	// including after success. Unknown and known usernames incur the same
+	// bcrypt work even when credentials have different costs.
+	for _, group := range b.costGroups {
+		hash := group.dummyHash
+		isUserHash := exists && credential.cost == group.cost
+		if isUserHash {
+			hash = credential.hash
+		}
+		compareErr := compare(hash, passwordBytes)
+		if isUserHash && compareErr == nil {
+			matched = true
+		}
 	}
-	compareErr := bcrypt.CompareHashAndPassword(hash, []byte(password))
 	if !b.ready {
 		return Principal{}, ErrUnavailable
 	}
-	if !exists || compareErr != nil {
+	if !matched {
 		return Principal{}, ErrInvalidCredentials
 	}
 	return Principal{Name: credential.principal, ClientIdentifier: username}, nil

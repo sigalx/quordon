@@ -338,6 +338,14 @@ Capability `cancel_query` требует отдельного server-side proof.
 - health endpoints доступны без credentials;
 - valid username/password создаёт ожидаемый principal и сохраняет Basic username
   как отдельный client identifier;
+- dotted usernames проходят inline/file/ref config loading и HTTP Basic Auth,
+  сохраняя регистр и отличие от логинов с дефисами и подчёркиваниями;
+- точки остаются запрещёнными в остальных policy names, а invalid/duplicate
+  usernames и неверные credential fields отклоняются до startup;
+- mixed bcrypt cost 10–14 не нарушает readiness; проверяется правильный пароль
+  каждого пользователя, отказ неверному паролю и unknown username;
+- bcrypt comparison calls имеют одинаковые cost, порядок и количество при
+  успехе, ошибке и unknown username; dummy match не авторизует пользователя;
 - некорректная или неканоническая bcrypt encoding переводит readiness в false;
 - bcrypt cost вне поддерживаемого диапазона 10–14 отклоняется до генерации
   dummy hash;

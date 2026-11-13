@@ -100,7 +100,7 @@ prefix; a border proxy may add and remove one when required.
 
 ```bash
 make verify
-make build VERSION=0.1.3
+make build VERSION=0.2.1
 ./bin/quordon --version
 ```
 

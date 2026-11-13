@@ -22,6 +22,8 @@ authentication:
   basic:
     realm: quordon
     users:
+      # Usernames may contain dots, for example andrey.shcheglov.
+      # Users may have different bcrypt costs within 10-14.
       explain-client:
         principal: readonly-client
         # Alternatively, replace the next line with password_hash: "$2y$12$..."
