@@ -19,7 +19,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var portableIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+var (
+	portableIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	basicUsername      = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*$`)
+)
 
 const (
 	redactedSecretMarker        = "__QUORDON_REDACTED__"
@@ -546,7 +549,7 @@ func (c Config) Validate() error {
 	}
 
 	for username, user := range c.Authentication.Basic.Users {
-		if err := validateName("authentication.basic.users", username); err != nil {
+		if err := validateBasicUsername(username); err != nil {
 			return err
 		}
 		if _, ok := c.Principals[user.Principal]; !ok {
@@ -1206,6 +1209,13 @@ func validatePatterns(policy PatternPolicy, segments int) error {
 func validateName(section, name string) error {
 	if !portableIdentifier.MatchString(strings.ReplaceAll(name, "-", "_")) {
 		return fmt.Errorf("%s contains invalid name %q", section, name)
+	}
+	return nil
+}
+
+func validateBasicUsername(username string) error {
+	if !basicUsername.MatchString(username) {
+		return fmt.Errorf("authentication.basic.users contains invalid username %q", username)
 	}
 	return nil
 }

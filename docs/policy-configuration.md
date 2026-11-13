@@ -151,16 +151,29 @@ authentication:
   basic:
     realm: quordon
     users:
-      explain-client:
+      andrey.shcheglov:
         principal: readonly-client
         password_hash_secret_ref: env:QUORDON_EXPLAIN_PASSWORD_HASH
 ```
 
-Имя в `users` является Basic Auth username. Secret provider возвращает
+Имя в `users` является регистрозависимым Basic Auth username с grammar
+`^[A-Za-z_][A-Za-z0-9_.-]*$`: после первой ASCII-буквы или `_` разрешены
+ASCII-буквы, цифры, `_`, `-` и точки. Логины не нормализуются:
+`andrey.shcheglov`, `andrey-shcheglov` и `Andrey.Shcheglov` различаются.
+Это правило относится только к Basic Auth; grammar остальных policy names
+и resource identifiers не меняется. Secret provider возвращает
 канонически закодированный 60-символьный bcrypt hash с префиксом `$2a$`,
 `$2b$` или `$2y$`. Весь hash, а не только version и cost, проверяется до
 перехода сервиса в ready. Поддерживается bcrypt cost от 10 до 14 включительно;
 значения вне диапазона отклоняются до выполнения затратной bcrypt-операции.
+У разных пользователей могут быть разные cost. Каждый authentication request
+выполняет по одному bcrypt comparison для каждого настроенного cost в порядке
+возрастания, используя настоящий hash только для выбранного пользователя и
+dummy hashes для остальных cost. Unknown username проходит тот же набор
+comparisons; успешное совпадение не завершает проверку досрочно. Число
+comparisons ограничено пятью и не зависит от числа пользователей. При нескольких
+cost работа на запрос возрастает до суммы работ этих cost, менее двух работ
+самого дорогого настроенного cost.
 Plaintext password не хранится в policy и не логируется.
 
 Для локальной установки bcrypt hash можно записать непосредственно в policy:

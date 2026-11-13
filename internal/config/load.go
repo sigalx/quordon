@@ -890,7 +890,13 @@ func (l *policyLoader) strict(n *yaml.Node, t reflect.Type) error {
 			return l.fail("POLICY_TYPE", n)
 		}
 		for i := 0; i < len(n.Content); i += 2 {
-			if err := validateName("", n.Content[i].Value); err != nil {
+			var err error
+			if t == reflect.TypeFor[map[string]BasicUser]() {
+				err = validateBasicUsername(n.Content[i].Value)
+			} else {
+				err = validateName("", n.Content[i].Value)
+			}
+			if err != nil {
 				return l.fail("POLICY_IDENTIFIER", n.Content[i])
 			}
 			if err := l.strict(n.Content[i+1], t.Elem()); err != nil {

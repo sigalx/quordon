@@ -264,6 +264,59 @@ func TestAggregateResponseFixturesMatchOpenAPI31(t *testing.T) {
 	assertOpenAPIResponseValidity(t, contract, request, strings.Replace(grouped, `["active","2"]`, `["active",2]`, 1), false)
 }
 
+func TestDottedBasicUsersAndMixedCostsMatchOpenAPI31(t *testing.T) {
+	contract := loadOpenAPI31Validator(t)
+	defer contract.Release()
+	server, closeDatabases := successfulContractServer(t)
+	defer closeDatabases()
+	users := make(map[string]config.BasicUser)
+	for username, cost := range map[string]int{"first.client": 10, "second.client": 12} {
+		hash, err := bcrypt.GenerateFromPassword([]byte(username+"-password"), cost)
+		if err != nil {
+			t.Fatal(err)
+		}
+		users[username] = config.BasicUser{Principal: "contract-client", PasswordHash: string(hash)}
+	}
+	authenticator, problems := auth.NewBasic(config.BasicAuth{Realm: "quordon", Users: users}, secrets.Map{})
+	if len(problems) != 0 || !authenticator.Ready() {
+		t.Fatalf("auth problems=%v ready=%v", problems, authenticator.Ready())
+	}
+	server.authenticator = authenticator
+	for _, fixture := range []struct {
+		name, username, password string
+		status                   int
+	}{
+		{"cost 10", "first.client", "first.client-password", http.StatusOK},
+		{"cost 12", "second.client", "second.client-password", http.StatusOK},
+		{"wrong password cost 10", "first.client", "wrong", http.StatusUnauthorized},
+		{"wrong password cost 12", "second.client", "wrong", http.StatusUnauthorized},
+		{"unknown user", "unknown.client", "wrong", http.StatusUnauthorized},
+		{"case-sensitive user", "First.Client", "first.client-password", http.StatusUnauthorized},
+		{"hyphen is distinct", "first-client", "first.client-password", http.StatusUnauthorized},
+		{"underscore is distinct", "first_client", "first.client-password", http.StatusUnauthorized},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "http://quordon.test/capabilities", nil)
+			request.SetBasicAuth(fixture.username, fixture.password)
+			if valid, validationErrors := contract.ValidateHttpRequest(request); !valid {
+				t.Fatalf("Basic Auth request violates OpenAPI: %v", validationErrors)
+			}
+			response := httptest.NewRecorder()
+			server.Handler().ServeHTTP(response, request)
+			if response.Code != fixture.status {
+				t.Fatalf("status=%d want=%d body=%s", response.Code, fixture.status, response.Body)
+			}
+			if fixture.status == http.StatusUnauthorized &&
+				(response.Header().Get("WWW-Authenticate") == "" || !strings.Contains(response.Body.String(), `"code":"INVALID_CREDENTIALS"`)) {
+				t.Fatalf("unsafe authentication failure: headers=%v body=%s", response.Header(), response.Body)
+			}
+			if valid, validationErrors := contract.ValidateHttpResponse(request, response.Result()); !valid {
+				t.Fatalf("Basic Auth response violates OpenAPI: %v", validationErrors)
+			}
+		})
+	}
+}
+
 func TestSuccessfulNewHandlersMatchOpenAPI31(t *testing.T) {
 	contract := loadOpenAPI31Validator(t)
 	defer contract.Release()

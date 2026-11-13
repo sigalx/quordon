@@ -56,6 +56,12 @@ Authorization: Basic base64(username:password)
 
 Успешная проверка username и password создаёт `Principal`. Клиент не может изменить principal, profile assignments или datasource дополнительными заголовками.
 
+Basic Auth username регистрозависим, не нормализуется и соответствует
+`^[A-Za-z_][A-Za-z0-9_.-]*$`, включая логины с точками. Настроенные пользователи
+могут иметь разные bcrypt cost в диапазоне 10–14. Каждая попытка выполняет один
+comparison для каждого настроенного cost с настоящим или dummy hash, без
+досрочного выхода после совпадения.
+
 Ответ `401` содержит `WWW-Authenticate: Basic realm="quordon", charset="UTF-8"`.
 Quordon сам принимает HTTP и не терминирует TLS. В local mode plaintext
 разрешён на loopback interface; при удалённом доступе клиент использует HTTPS
